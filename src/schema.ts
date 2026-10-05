@@ -63,6 +63,8 @@ export const Capabilities = z.object({
   send_limit_per_day: z.number().int().positive().nullable(),
   threads: z.enum(["native", "hint", "none"]),
   permanent_delete: z.boolean(),
+  /** Who files the copy in Sent after a send: the engine (IMAP) or the server (JMAP submission). */
+  sent_copy: z.enum(["client", "server"]),
 });
 export type Capabilities = z.infer<typeof Capabilities>;
 
@@ -255,5 +257,18 @@ export const ImapAccountConfig = z.object({
 });
 export type ImapAccountConfig = z.infer<typeof ImapAccountConfig>;
 
-export const AccountConfig = z.discriminatedUnion("provider", [ImapAccountConfig]);
+export const JmapAccountConfig = z.object({
+  provider: z.literal("jmap"),
+  address: z.string().email(),
+  jmap: z.object({
+    /** Session URL, e.g. https://api.fastmail.com/.well-known/jmap or http://host:8080/.well-known/jmap */
+    url: z.string().url(),
+    user: z.string().optional(),
+    pass: z.string().optional(),
+    token: z.string().optional(), // bearer token instead of user/pass
+  }),
+});
+export type JmapAccountConfig = z.infer<typeof JmapAccountConfig>;
+
+export const AccountConfig = z.discriminatedUnion("provider", [ImapAccountConfig, JmapAccountConfig]);
 export type AccountConfig = z.infer<typeof AccountConfig>;

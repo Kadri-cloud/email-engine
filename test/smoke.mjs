@@ -6,6 +6,13 @@ import assert from "node:assert/strict";
 
 const BASE = process.env.ENGINE_URL ?? "http://127.0.0.1:8080";
 const TOKEN = process.env.ENGINE_TOKEN ?? "test";
+// Which engine account to test, and the IMAP side channel used to inject mail behind the engine's back.
+// Defaults target alice on Dovecot. For the JMAP account on Stalwart:
+//   SMOKE_ACCOUNT=bob@example.com SMOKE_IMAP=127.0.0.1:1993:bob:pass node test/smoke.mjs
+const ACCOUNT_ADDRESS = process.env.SMOKE_ACCOUNT ?? "alice@example.com";
+const [SC_HOST = "127.0.0.1", SC_PORT = "993", SC_USER = "alice", SC_PASS = "pass"] = (process.env.SMOKE_IMAP ?? "").split(":");
+const sideChannel = () =>
+  new ImapFlow({ host: SC_HOST, port: Number(SC_PORT), secure: true, auth: { user: SC_USER, pass: SC_PASS }, tls: { rejectUnauthorized: false }, logger: false });
 const H = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
 const api = async (path, init = {}) => {
   const r = await fetch(BASE + path, { ...init, headers: H });
@@ -45,19 +52,20 @@ const step = async (name, fn) => {
 };
 
 const health = await api("/health");
-const account = health.accounts[0];
-assert.ok(account, "no account connected");
+const account = health.accounts.find((a) => a.address === ACCOUNT_ADDRESS);
+assert.ok(account, `account ${ACCOUNT_ADDRESS} not connected`);
+console.log(`account ${account.address} (${account.id}) status=${account.status}`);
 const folders = await api(`/accounts/${account.id}/folders`);
 const byRole = (r) => folders.find((f) => f.role === r);
 let cursor = health.cursor;
 let msg; // the message we create and push around
 
-await step("live push: APPEND arrives as message.received via IDLE", async () => {
-  const c = new ImapFlow({ host: "127.0.0.1", port: 993, secure: true, auth: { user: "alice", pass: "pass" }, tls: { rejectUnauthorized: false }, logger: false });
+await step("live push: APPEND arrives as message.received via push", async () => {
+  const c = sideChannel();
   await c.connect();
   const stamp = Date.now();
   await c.append("INBOX", [
-    `From: "Push Tester" <push@example.com>`, `To: alice@example.com`, `Subject: Live push ${stamp}`,
+    `From: "Push Tester" <push@example.com>`, `To: ${ACCOUNT_ADDRESS}`, `Subject: Live push ${stamp}`,
     `Date: ${new Date().toUTCString()}`, `Message-ID: <push-${stamp}@example.com>`,
     `Authentication-Results: mx.example.com; dmarc=fail header.from=example.com`,
     `Content-Type: text/plain; charset=utf-8`, ``, `This arrived while the engine was idling. Keyword: pineapple.`,
@@ -237,11 +245,11 @@ await step("scope: action outside the allowed list is refused", async () => {
 
 await step("redaction: codes and card numbers are masked for the scoped token only", async () => {
   cursor = (await api("/health")).cursor;
-  const c = new ImapFlow({ host: "127.0.0.1", port: 993, secure: true, auth: { user: "alice", pass: "pass" }, tls: { rejectUnauthorized: false }, logger: false });
+  const c = sideChannel();
   await c.connect();
   const stamp = Date.now();
   await c.append("INBOX", [
-    `From: "Bank" <noreply@bank.example>`, `To: alice@example.com`, `Subject: Your code ${stamp}`,
+    `From: "Bank" <noreply@bank.example>`, `To: ${ACCOUNT_ADDRESS}`, `Subject: Your code ${stamp}`,
     `Date: ${new Date().toUTCString()}`, `Message-ID: <otp-${stamp}@bank.example>`, `Content-Type: text/plain; charset=utf-8`, ``,
     `Your verification code is 482913. It expires in 10 minutes.`, `Card on file: 4111 1111 1111 1111. Order 20261006 ships Monday.`,
   ].join("\r\n"));
@@ -262,7 +270,8 @@ await step("redaction: codes and card numbers are masked for the scoped token on
 });
 
 await step("scope: a message moved out of the allowed folder disappears, and returns", async () => {
-  const archive = byRole("archive");
+  const archive = byRole("archive") ?? folders.find((f) => /archive/i.test(f.path) || /archive/i.test(f.name));
+  assert.ok(archive, "no archive folder");
   const mv = await action("move", { message_id: otpMsg.message_id, to_folder_id: archive.id });
   assert.equal(mv.status, "executed");
   const hidden = await apiAs(triage.secret, `/messages/${otpMsg.message_id}`);

@@ -53,6 +53,18 @@ export interface SyncSink {
   resetFolder(folderPath: string): void;
 }
 
+/** Fallback when a server assigns no role: recognise the usual names in a few languages. */
+export function roleFromName(name: string): FolderRole | null {
+  const n = name.trim().toLowerCase();
+  if (n === "inbox") return "inbox";
+  if (/^(sent( items| mail| messages)?|gesendet|envoyés|enviados|inviati)$/.test(n)) return "sent";
+  if (/^(drafts?|entwürfe|brouillons|borradores|bozze)$/.test(n)) return "drafts";
+  if (/^(archive|archives|all mail|archiv|archivo|archivio)$/.test(n)) return "archive";
+  if (/^(junk( e-?mail)?|spam|bulk mail|unerwünscht|indésirables|correo no deseado)$/.test(n)) return "spam";
+  if (/^(trash|deleted( items| messages)?|bin|papierkorb|corbeille|papelera|cestino)$/.test(n)) return "trash";
+  return null;
+}
+
 export interface Adapter {
   readonly capabilities: Capabilities | null;
   connect(): Promise<Capabilities>;

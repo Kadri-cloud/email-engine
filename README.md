@@ -2,11 +2,12 @@
 
 A self-hosted engine that turns any mailbox into one ordered event stream, with safe, reversible actions. Plug in IMAP today, JMAP and the Gmail and Microsoft APIs next, and every app or AI agent on the other side sees the same seven events and the same twelve actions. Think of it as USB for email.
 
-**Status: version 0.0.1, the IMAP wedge.** One real mailbox in, a replayable event log out, actions with a journal, undo and an approval queue. Tested end to end against Dovecot 2.4.
+**Status: version 0.0.1.** IMAP and JMAP adapters, a replayable event log, actions with a journal, undo and an approval queue, scoped tokens, and an MCP server. The same twenty end-to-end checks pass against Dovecot 2.4 over IMAP and against Stalwart 0.13 over JMAP.
 
 ## What it does
 
 - **Syncs** any IMAP account with IDLE push, QRESYNC/CONDSTORE incremental sync (expunges arrive as VANISHED, no per-poll UID scans), reconnect with backoff, and folder-role detection.
+- **Syncs** any JMAP account (Fastmail, Stalwart) with state-based delta sync, EventSource push, native threads and server-side filing of sent mail. Both adapters implement one interface; nothing above them knows which protocol is underneath.
 - **Mints stable message IDs** that survive folder moves, and rebuilds threads with the JWZ algorithm.
 - **Appends every change to a cursor-ordered log.** Consumers read it by polling, by Server-Sent Events, or by webhook, and replay from any cursor after being offline.
 - **Executes actions idempotently** (client keys), journals each one, and can undo moves, flag changes, deletes, drafts and timers.
@@ -25,9 +26,11 @@ Requirements: Node 22+, and Docker if you want the local test mail server.
 npm install
 npm run build
 
-# a real Dovecot to test against: any username, password "pass"
-docker compose up -d
-node test/seed.mjs alice 6
+# two real mail servers to test against
+docker compose up -d                       # Dovecot (IMAP) and Stalwart (IMAP + JMAP)
+node test/seed.mjs alice 6                 # Dovecot: any username, password "pass"
+node test/stalwart-setup.mjs bob pass      # Stalwart: creates the domain and account
+node test/seed.mjs bob 6 127.0.0.1 1993    # seed Stalwart over IMAP
 
 # run the engine
 ENGINE_TOKEN=test node dist/index.js
@@ -42,7 +45,18 @@ curl -X POST http://127.0.0.1:8080/accounts \
        "imap":{"host":"127.0.0.1","port":993,"secure":true,"user":"alice","pass":"pass","insecure_tls":true}}'
 
 node test/events.mjs 0        # pretty-print the event log
-node test/smoke.mjs           # end-to-end check: push, actions, undo, proposals, timers, SSE
+node test/smoke.mjs           # end-to-end check: push, actions, undo, proposals, timers, SSE, tokens
+```
+
+The same engine takes a JMAP account. Mail injected over IMAP shows up through JMAP, which is the point:
+
+```bash
+curl -X POST http://127.0.0.1:8080/accounts \
+  -H "authorization: Bearer test" -H "content-type: application/json" \
+  -d '{"provider":"jmap","address":"bob@example.com",
+       "jmap":{"url":"http://127.0.0.1:8081/.well-known/jmap","user":"bob","pass":"pass"}}'
+
+SMOKE_ACCOUNT=bob@example.com SMOKE_IMAP=127.0.0.1:1993:bob:pass node test/smoke.mjs
 ```
 
 ## HTTP API
@@ -131,13 +145,15 @@ npm test                      # unit tests (threading)
 node test/smoke.mjs           # needs the engine and Dovecot running
 ```
 
-Layout: `src/schema.ts` (the specification as zod schemas), `src/store.ts` (SQLite), `src/adapter.ts` (the adapter interface), `src/imap.ts` (the only file that speaks IMAP/SMTP), `src/sync.ts` (runners, event log, actions, journal, timers), `src/scope.ts` (tokens and redaction), `src/api.ts` (HTTP and SSE), `src/threading.ts` (JWZ).
+Layout: `src/schema.ts` (the specification as zod schemas), `src/store.ts` (SQLite), `src/adapter.ts` (the adapter interface), `src/imap.ts` (the only file that speaks IMAP/SMTP), `src/jmap.ts` (the only file that speaks JMAP), `src/sync.ts` (runners, event log, actions, journal, timers), `src/scope.ts` (tokens and redaction), `src/api.ts` (HTTP and SSE), `src/mcp.ts` (MCP server), `src/threading.ts` (JWZ).
+
+A third lesson from the JMAP work: a server behind Docker or a proxy advertises session URLs on a hostname only it can resolve, so the adapter rebases them onto the origin it actually reached, and it does so with plain string handling because a URL parser percent-encodes the `{accountId}` and `{blobId}` placeholders.
 
 Two lessons the smoke test taught, kept here so nobody relearns them: a push that arrives while a sync is running must be queued, not dropped (the poll loop checks its dirty set before waiting); and a long-lived IMAP connection's cached UIDNEXT only refreshes on SELECT, so new mail is always fetched with an open-ended `lastUid:*` range and the next UID is derived from what the server returns.
 
 ## Not yet
 
-JMAP, Gmail API and Microsoft Graph adapters. MCP delivery. Webhook signatures and retry queue. Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
+Gmail API and Microsoft Graph adapters. Inbound SMTP adapter. Webhook signatures and retry queue. Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
 
 ## Licence
 

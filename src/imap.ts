@@ -3,7 +3,7 @@
 // Everything above this file sees folders, messages, flags and refs only.
 import { ImapFlow, type FetchMessageObject, type FetchQueryObject, type MessageStructureObject } from "imapflow";
 import nodemailer from "nodemailer";
-import type { Adapter, RemoteFolder, RemoteMessage, SyncSink } from "./adapter.js";
+import { roleFromName, type Adapter, type RemoteFolder, type RemoteMessage, type SyncSink } from "./adapter.js";
 import type { Address, Capabilities, Flags, FolderRole, ImapAccountConfig } from "./schema.js";
 
 interface FolderState {
@@ -189,6 +189,7 @@ export class ImapAdapter implements Adapter {
       send_limit_per_day: gmail ? 500 : null,
       threads: gmail ? "hint" : "none",
       permanent_delete: true,
+      sent_copy: gmail ? "server" : "client", // Gmail files sent mail itself; everyone else needs an APPEND
     };
   }
 
@@ -202,7 +203,7 @@ export class ImapAdapter implements Adapter {
     const out: RemoteFolder[] = [];
     for (const f of await c.list()) {
       if (f.flags.has("\\Noselect") || f.flags.has("\\NonExistent")) continue;
-      const role = f.specialUse ? SPECIAL[f.specialUse] ?? "other" : f.path.toUpperCase() === "INBOX" ? "inbox" : "other";
+      const role: FolderRole = (f.specialUse ? SPECIAL[f.specialUse] : undefined) ?? roleFromName(f.name) ?? "other";
       out.push({ path: f.path, name: f.name, role });
     }
     return out;

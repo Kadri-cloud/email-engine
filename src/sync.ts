@@ -5,6 +5,7 @@ import { simpleParser } from "mailparser";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import type { Adapter, RemoteFolder, RemoteMessage, SyncSink } from "./adapter.js";
 import { ImapAdapter } from "./imap.js";
+import { JmapAdapter } from "./jmap.js";
 import { ActionParams, type AccountConfig, type ActionRequest, type Address, type Flags, type Trust, HIGH_RISK } from "./schema.js";
 import { mintMessageId, newId, now, type MessageRow, type Store } from "./store.js";
 import { normalizeMessageId, normalizeSubject } from "./threading.js";
@@ -24,6 +25,8 @@ export function makeAdapter(config: AccountConfig): Adapter {
   switch (config.provider) {
     case "imap":
       return new ImapAdapter(config);
+    case "jmap":
+      return new JmapAdapter(config);
   }
 }
 
@@ -664,10 +667,10 @@ export class Engine {
           await r.adapter.send(raw);
         }
         const sent = r.folderByRole("sent");
-        if (sent) {
+        if (sent && r.adapter.capabilities?.sent_copy !== "server") {
           await r.adapter.append(sent.path, raw, { seen: true });
-          await r.syncPaths([sent.path]);
         }
+        if (sent) await r.syncPaths([sent.path]);
         return { journal: null, result: { message_id: mintMessageId(a.account, messageId, "") } };
       }
       case "schedule_timer": {

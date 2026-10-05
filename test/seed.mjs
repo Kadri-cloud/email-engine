@@ -1,13 +1,17 @@
-// Inject test mail into the Dovecot container with plain IMAP APPEND.
-// Usage: node test/seed.mjs [user] [count]
+// Inject test mail into a test mail server with plain IMAP APPEND.
+// Usage: node test/seed.mjs [user] [count] [host] [port]
+//   Dovecot:  node test/seed.mjs alice 6
+//   Stalwart: node test/seed.mjs bob 6 127.0.0.1 1993
 import { ImapFlow } from "imapflow";
 
 const user = process.argv[2] ?? "alice";
 const count = Number(process.argv[3] ?? 3);
+const host = process.argv[4] ?? "127.0.0.1";
+const port = Number(process.argv[5] ?? 993);
 
 const client = new ImapFlow({
-  host: "127.0.0.1",
-  port: 993,
+  host,
+  port,
   secure: true,
   auth: { user, pass: "pass" },
   tls: { rejectUnauthorized: false },
