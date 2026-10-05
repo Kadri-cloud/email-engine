@@ -1,0 +1,15 @@
+# Local test rig: a real Dovecot 2.4. Any username logs in with password "pass".
+# Inside the container IMAP listens on 31143 (plain) and 31993 (TLS, self-signed).
+# Mail is injected with `node test/seed.mjs`.
+services:
+  dovecot:
+    image: dovecot/dovecot:latest
+    environment:
+      USER_PASSWORD: pass
+    ports:
+      - "143:31143"
+      - "993:31993"
+    volumes:
+      - dovecot-mail:/srv/vmail
+volumes:
+  dovecot-mail:
