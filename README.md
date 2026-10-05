@@ -96,6 +96,24 @@ curl -X POST http://127.0.0.1:8080/tokens -H "authorization: Bearer test" -H "co
 
 With `mode: "propose_only"` every write the agent makes lands in the queue as a proposal, and only a token holding `approve` (or the admin) can execute it. Redaction classes: `otp`, `card`, `iban`, `email`, `phone`, or `re:<pattern>`. Every read response carries `as_of`, the account's last successful sync, so an agent knows how stale its view is.
 
+## Plug into Claude Desktop or any MCP client
+
+The MCP server is a thin consumer of the HTTP API that holds one scoped token. Whatever that token may see and do is exactly what the agent may see and do. Create a token (above), then add this to your MCP client's configuration:
+
+```json
+{
+  "mcpServers": {
+    "email-engine": {
+      "command": "node",
+      "args": ["C:/path/to/email-engine/dist/mcp.js"],
+      "env": { "ENGINE_URL": "http://127.0.0.1:8080", "ENGINE_MCP_TOKEN": "tok_..." }
+    }
+  }
+}
+```
+
+Tools: `search_mail`, `get_message`, `get_thread`, `list_accounts_and_folders`, `list_events`, `move_message`, `set_flags`, `delete_message`, `create_draft`, `send_mail`, `schedule_timer`, `get_action`, `approve_action`, `reject_action`, `undo_action`. With a `propose_only` token every write comes back as a proposal for a human to approve. `node test/mcp-smoke.mjs` drives the server as a client and checks all of this.
+
 ## Configuration
 
 | Variable | Default | Meaning |
