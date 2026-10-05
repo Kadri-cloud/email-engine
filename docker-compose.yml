@@ -1,6 +1,8 @@
-# Local test rig: a real Dovecot 2.4. Any username logs in with password "pass".
-# Inside the container IMAP listens on 31143 (plain) and 31993 (TLS, self-signed).
-# Mail is injected with `node test/seed.mjs`.
+# Local test rig. Two real mail servers:
+#   dovecot  — IMAP only. Any username, password "pass". Host ports 143 (plain) and 993 (TLS, self-signed).
+#   stalwart — IMAP + JMAP + SMTP. Admin password is printed in its log on first start;
+#              test accounts are created by `node test/stalwart-setup.mjs`.
+#              Host ports: 8081 (HTTP: JMAP + admin API), 1143/1993 (IMAP), 1587 (submission).
 services:
   dovecot:
     image: dovecot/dovecot:latest
@@ -11,5 +13,15 @@ services:
       - "993:31993"
     volumes:
       - dovecot-mail:/srv/vmail
+  stalwart:
+    image: stalwartlabs/stalwart:v0.13.3
+    ports:
+      - "8081:8080"
+      - "1143:143"
+      - "1993:993"
+      - "1587:587"
+    volumes:
+      - stalwart-data:/opt/stalwart
 volumes:
   dovecot-mail:
+  stalwart-data:

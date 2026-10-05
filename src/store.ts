@@ -20,16 +20,15 @@ CREATE TABLE IF NOT EXISTS accounts (
   config TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'disconnected',
   capabilities TEXT,
-  last_sync TEXT
+  last_sync TEXT,
+  sync_state TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS folders (
   id TEXT PRIMARY KEY,
   account TEXT NOT NULL,
   path TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL,
-  uidvalidity INTEGER,
-  uidnext INTEGER,
-  modseq INTEGER,
   UNIQUE(account, path)
 );
 CREATE TABLE IF NOT EXISTS messages (
@@ -55,10 +54,10 @@ CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
 CREATE TABLE IF NOT EXISTS message_folders (
   message_id TEXT NOT NULL,
   folder_id TEXT NOT NULL,
-  uid INTEGER NOT NULL,
+  ref TEXT NOT NULL,
   PRIMARY KEY (message_id, folder_id)
 );
-CREATE INDEX IF NOT EXISTS message_folders_uid ON message_folders(folder_id, uid);
+CREATE INDEX IF NOT EXISTS message_folders_ref ON message_folders(folder_id, ref);
 CREATE TABLE IF NOT EXISTS threads (
   id TEXT PRIMARY KEY,
   account TEXT NOT NULL,
@@ -166,15 +165,14 @@ export function openStore(path: string) {
       `UPDATE accounts SET status = ?, capabilities = COALESCE(?, capabilities), last_sync = COALESCE(?, last_sync) WHERE id = ?`,
     ),
     upsertFolder: db.prepare(
-      `INSERT INTO folders (id, account, path, role) VALUES (?, ?, ?, ?)
-       ON CONFLICT(account, path) DO UPDATE SET role = excluded.role
+      `INSERT INTO folders (id, account, path, name, role) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(account, path) DO UPDATE SET role = excluded.role, name = excluded.name
        RETURNING *`,
     ),
     folderByPath: db.prepare(`SELECT * FROM folders WHERE account = ? AND path = ?`),
     foldersForAccount: db.prepare(`SELECT * FROM folders WHERE account = ?`),
-    setFolderState: db.prepare(
-      `UPDATE folders SET uidvalidity = ?, uidnext = ?, modseq = ? WHERE id = ?`,
-    ),
+    getSyncState: db.prepare(`SELECT sync_state FROM accounts WHERE id = ?`),
+    setSyncState: db.prepare(`UPDATE accounts SET sync_state = ? WHERE id = ?`),
     messageById: db.prepare(`SELECT * FROM messages WHERE id = ?`),
     insertMessage: db.prepare(
       `INSERT OR IGNORE INTO messages
@@ -186,14 +184,17 @@ export function openStore(path: string) {
     ),
     setFlags: db.prepare(`UPDATE messages SET flags = ? WHERE id = ?`),
     linkFolder: db.prepare(
-      `INSERT OR REPLACE INTO message_folders (message_id, folder_id, uid) VALUES (?, ?, ?)`,
+      `INSERT OR REPLACE INTO message_folders (message_id, folder_id, ref) VALUES (?, ?, ?)`,
     ),
     unlinkFolder: db.prepare(`DELETE FROM message_folders WHERE message_id = ? AND folder_id = ?`),
-    foldersOfMessage: db.prepare(`SELECT folder_id, uid FROM message_folders WHERE message_id = ?`),
-    messageByFolderUid: db.prepare(
-      `SELECT m.* FROM messages m JOIN message_folders mf ON mf.message_id = m.id WHERE mf.folder_id = ? AND mf.uid = ?`,
+    foldersOfMessage: db.prepare(`SELECT folder_id, ref FROM message_folders WHERE message_id = ?`),
+    messageByFolderRef: db.prepare(
+      `SELECT m.* FROM messages m JOIN message_folders mf ON mf.message_id = m.id WHERE mf.folder_id = ? AND mf.ref = ?`,
     ),
-    uidsInFolder: db.prepare(`SELECT message_id, uid FROM message_folders WHERE folder_id = ?`),
+    messageByRef: db.prepare(
+      `SELECT m.* FROM messages m JOIN message_folders mf ON mf.message_id = m.id WHERE m.account = ? AND mf.ref = ? LIMIT 1`,
+    ),
+    refsInFolder: db.prepare(`SELECT message_id, ref FROM message_folders WHERE folder_id = ?`),
     messageByHeaderId: db.prepare(
       `SELECT * FROM messages WHERE account = ? AND header_message_id = ? LIMIT 1`,
     ),
@@ -300,19 +301,20 @@ export function openStore(path: string) {
     },
 
     // ----- folders -----
-    upsertFolder(account: string, path: string, role: string) {
+    upsertFolder(account: string, path: string, name: string, role: string) {
       const existing = q.folderByPath.get(account, path) as any;
       const id = existing?.id ?? newId("fld");
-      return q.upsertFolder.get(id, account, path, role) as {
-        id: string; account: string; path: string; role: string;
-        uidvalidity: number | null; uidnext: number | null; modseq: number | null;
-      };
+      return q.upsertFolder.get(id, account, path, name, role) as { id: string; account: string; path: string; name: string; role: string };
     },
     foldersForAccount(account: string) {
       return q.foldersForAccount.all(account) as any[];
     },
-    setFolderState(id: string, uidvalidity: number, uidnext: number, modseq: number | null) {
-      q.setFolderState.run(uidvalidity, uidnext, modseq, id);
+    getSyncState(account: string): Record<string, unknown> {
+      const r = q.getSyncState.get(account) as any;
+      return r ? JSON.parse(r.sync_state) : {};
+    },
+    setSyncState(account: string, state: Record<string, unknown>) {
+      q.setSyncState.run(JSON.stringify(state), account);
     },
 
     // ----- messages -----
@@ -324,8 +326,12 @@ export function openStore(path: string) {
       const r = q.messageByHeaderId.get(account, headerId);
       return r ? rowToMessage(r) : null;
     },
-    messageByFolderUid(folderId: string, uid: number): MessageRow | null {
-      const r = q.messageByFolderUid.get(folderId, uid);
+    messageByFolderRef(folderId: string, ref: string): MessageRow | null {
+      const r = q.messageByFolderRef.get(folderId, ref);
+      return r ? rowToMessage(r) : null;
+    },
+    messageByRef(account: string, ref: string): MessageRow | null {
+      const r = q.messageByRef.get(account, ref);
       return r ? rowToMessage(r) : null;
     },
     insertMessage(m: MessageRow): boolean {
@@ -358,17 +364,17 @@ export function openStore(path: string) {
     setFlags(id: string, flags: Flags) {
       q.setFlags.run(JSON.stringify(flags), id);
     },
-    linkFolder(messageId: string, folderId: string, uid: number) {
-      q.linkFolder.run(messageId, folderId, uid);
+    linkFolder(messageId: string, folderId: string, ref: string) {
+      q.linkFolder.run(messageId, folderId, ref);
     },
     unlinkFolder(messageId: string, folderId: string) {
       q.unlinkFolder.run(messageId, folderId);
     },
     foldersOfMessage(messageId: string) {
-      return q.foldersOfMessage.all(messageId) as { folder_id: string; uid: number }[];
+      return q.foldersOfMessage.all(messageId) as { folder_id: string; ref: string }[];
     },
-    uidsInFolder(folderId: string) {
-      return q.uidsInFolder.all(folderId) as { message_id: string; uid: number }[];
+    refsInFolder(folderId: string) {
+      return q.refsInFolder.all(folderId) as { message_id: string; ref: string }[];
     },
     search(query: string, limit = 50): MessageRow[] {
       return (q.search.all(query, limit) as any[]).map(rowToMessage);

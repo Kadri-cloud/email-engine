@@ -1,36 +1,21 @@
 // The only file that speaks IMAP and SMTP. Two connections per account: one
 // parked in IDLE on the inbox, one working connection for syncs and actions.
-// Everything above this file sees folders, messages, flags and uids only.
-import { ImapFlow, type FetchMessageObject, type MessageStructureObject } from "imapflow";
+// Everything above this file sees folders, messages, flags and refs only.
+import { ImapFlow, type FetchMessageObject, type FetchQueryObject, type MessageStructureObject } from "imapflow";
 import nodemailer from "nodemailer";
+import type { Adapter, RemoteFolder, RemoteMessage, SyncSink } from "./adapter.js";
 import type { Address, Capabilities, Flags, FolderRole, ImapAccountConfig } from "./schema.js";
 
-export interface RemoteFolder {
-  path: string;
-  role: FolderRole;
+interface FolderState {
+  uidvalidity: number;
+  uidnext: number;
+  modseq: string | null; // bigint as string, JSON-safe
 }
-export interface FolderSnapshot {
+interface Snapshot {
   uidValidity: number;
   uidNext: number;
   highestModseq: bigint | null;
   exists: number;
-}
-export interface RemoteMessage {
-  snippet: string;
-  uid: number;
-  modseq: bigint | null;
-  flags: Flags;
-  headerMessageId: string | null;
-  inReplyTo: string | null;
-  references: string[];
-  authResults: string | null;
-  subject: string;
-  from: Address | null;
-  to: Address[];
-  cc: Address[];
-  date: string;
-  size: number;
-  hasAttachments: boolean;
 }
 
 const SPECIAL: Record<string, FolderRole> = {
@@ -49,6 +34,16 @@ const FLAG_NAMES: Record<keyof Flags, string> = {
   draft: "\\Draft",
 };
 const HEADERS = ["message-id", "in-reply-to", "references", "authentication-results"];
+const SNIPPET_BYTES = 2048;
+const QUERY: FetchQueryObject = {
+  uid: true,
+  flags: true,
+  envelope: true,
+  bodyStructure: true,
+  size: true,
+  headers: HEADERS,
+  bodyParts: [{ key: "1", start: 0, maxLength: SNIPPET_BYTES }],
+};
 
 export function toFlags(set: Set<string> | undefined): Flags {
   return {
@@ -58,6 +53,8 @@ export function toFlags(set: Set<string> | undefined): Flags {
     draft: !!set?.has("\\Draft"),
   };
 }
+const flagList = (set: Partial<Flags>, value: boolean) =>
+  (Object.keys(FLAG_NAMES) as (keyof Flags)[]).filter((k) => set[k] === value).map((k) => FLAG_NAMES[k]);
 
 /** Parse a raw header block (CRLF, folded lines) into lowercase name -> value. */
 export function parseHeaders(buf: Buffer | undefined): Record<string, string> {
@@ -88,8 +85,6 @@ const addr = (a: { name?: string; address?: string } | undefined): Address | nul
 const addrs = (list: { name?: string; address?: string }[] | undefined): Address[] =>
   (list ?? []).map(addr).filter((a): a is Address => !!a);
 
-const SNIPPET_BYTES = 2048;
-
 function decodeQP(s: string) {
   return s.replace(/=\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 }
@@ -115,15 +110,14 @@ export function snippetFrom(raw: Buffer | undefined, structure: MessageStructure
   return text.replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
-export function toRemoteMessage(m: FetchMessageObject): RemoteMessage {
+export function toRemoteMessage(m: FetchMessageObject, path: string): RemoteMessage {
   const h = parseHeaders(m.headers);
   const env = m.envelope ?? {};
   const refs = (h["references"] ?? "").match(/<[^<>\s]+>/g) ?? [];
   const date = env.date ? new Date(env.date) : m.internalDate ? new Date(m.internalDate) : new Date();
   return {
-    snippet: snippetFrom(m.bodyParts?.get("1"), m.bodyStructure),
-    uid: m.uid,
-    modseq: m.modseq ?? null,
+    ref: String(m.uid),
+    folderPaths: [path],
     flags: toFlags(m.flags),
     headerMessageId: h["message-id"] ?? env.messageId ?? null,
     inReplyTo: h["in-reply-to"] ?? env.inReplyTo ?? null,
@@ -136,10 +130,14 @@ export function toRemoteMessage(m: FetchMessageObject): RemoteMessage {
     date: (isNaN(date.getTime()) ? new Date() : date).toISOString(),
     size: m.size ?? 0,
     hasAttachments: hasAttachment(m.bodyStructure),
+    snippet: snippetFrom(m.bodyParts?.get("1"), m.bodyStructure),
+    threadHint: m.threadId ?? null,
   };
 }
 
-export class ImapAdapter {
+const samePath = (a: string, b: string) => a === b || (a.toUpperCase() === "INBOX" && b.toUpperCase() === "INBOX");
+
+export class ImapAdapter implements Adapter {
   private work: ImapFlow | null = null;
   private idle: ImapFlow | null = null;
   capabilities: Capabilities | null = null;
@@ -205,102 +203,124 @@ export class ImapAdapter {
     for (const f of await c.list()) {
       if (f.flags.has("\\Noselect") || f.flags.has("\\NonExistent")) continue;
       const role = f.specialUse ? SPECIAL[f.specialUse] ?? "other" : f.path.toUpperCase() === "INBOX" ? "inbox" : "other";
-      out.push({ path: f.path, role });
+      out.push({ path: f.path, name: f.name, role });
     }
     return out;
   }
 
-  private async withFolder<T>(path: string, fn: (c: ImapFlow, snap: FolderSnapshot) => Promise<T>): Promise<T> {
+  /** Run `fn` with the folder selected and locked. Helpers inside take the client; they never re-lock. */
+  private async withFolder<T>(path: string, fn: (c: ImapFlow, snap: Snapshot) => Promise<T>): Promise<T> {
     const c = await this.client();
     const lock = await c.getMailboxLock(path);
     try {
       const mb = c.mailbox;
       if (!mb) throw new Error(`mailbox ${path} did not open`);
-      const snap: FolderSnapshot = {
+      return await fn(c, {
         uidValidity: Number(mb.uidValidity),
         uidNext: mb.uidNext,
         highestModseq: mb.highestModseq ?? null,
         exists: mb.exists,
-      };
-      return await fn(c, snap);
+      });
     } finally {
       lock.release();
     }
   }
 
-  snapshot(path: string) {
-    return this.withFolder(path, async (_c, snap) => snap);
+  // ---------- sync ----------
+
+  async sync(folders: RemoteFolder[], state: Record<string, unknown>, sink: SyncSink) {
+    const st = { ...((state.folders as Record<string, FolderState> | undefined) ?? {}) };
+    for (const f of folders) {
+      st[f.path] = await this.syncFolder(f.path, st[f.path], sink);
+    }
+    return { folders: st };
+  }
+
+  private syncFolder(path: string, prev: FolderState | undefined, sink: SyncSink): Promise<FolderState> {
+    return this.withFolder(path, async (c, snap) => {
+      let fs = prev;
+      if (fs && fs.uidvalidity !== snap.uidValidity) {
+        // Server renumbered the folder. Forget refs silently; the refetch re-links by Message-ID.
+        sink.resetFolder(path);
+        fs = undefined;
+      }
+      const initial = !fs;
+      const qresync = ((c as any).enabled as Set<string> | undefined)?.has("QRESYNC") ?? false;
+
+      // New messages: the server decides what is new via an open-ended range from the last known uid.
+      // Cached UIDNEXT on a long-lived connection only refreshes on SELECT, so it is never trusted here.
+      const fromUid = fs?.uidnext ?? 1;
+      const maxUid = initial && snap.exists === 0 ? null : await this.fetchFrom(c, path, fromUid, (m) => sink.seen(m, false));
+      let uidnext = maxUid !== null ? maxUid + 1 : (fs?.uidnext ?? snap.uidNext);
+      if (initial) uidnext = Math.max(uidnext, snap.uidNext);
+
+      // Flag changes and, with QRESYNC, expunges: one CHANGEDSINCE fetch carries both.
+      let modseq: bigint | null = fs?.modseq ? BigInt(fs.modseq) : null;
+      let expungesCovered = false;
+      if (initial) {
+        modseq = snap.highestModseq; // fresh from this connection's SELECT
+      } else if (modseq !== null && snap.highestModseq !== null) {
+        const { changes, vanished, maxModseq } = await this.changedSince(c, path, modseq);
+        for (const ch of changes) sink.flags(path, String(ch.uid), ch.flags);
+        for (const uid of vanished) sink.gone(path, String(uid));
+        expungesCovered = qresync;
+        if (maxModseq !== null && maxModseq > modseq) modseq = maxModseq;
+      } else if (snap.exists <= 5000) {
+        // ponytail: full flag scan for small folders without CONDSTORE; large ones only learn flags on restart.
+        for await (const m of c.fetch("1:*", { uid: true, flags: true }, { uid: true })) sink.flags(path, String(m.uid), toFlags(m.flags));
+      }
+
+      // Expunges without QRESYNC: compare uid sets.
+      if (!initial && !expungesCovered) {
+        const known = sink.knownRefs(path);
+        if (known.length) {
+          const r = await c.search({ all: true }, { uid: true });
+          const server = new Set(Array.isArray(r) ? r : []);
+          for (const k of known) if (!server.has(Number(k.ref))) sink.gone(path, k.ref);
+        }
+      }
+
+      return { uidvalidity: snap.uidValidity, uidnext, modseq: modseq === null ? null : modseq.toString() };
+    });
+  }
+
+  /** Every message with uid >= fromUid. Returns the highest uid seen, or null when nothing was new. */
+  private async fetchFrom(c: ImapFlow, path: string, fromUid: number, onMessage: (m: RemoteMessage) => void): Promise<number | null> {
+    let maxUid: number | null = null;
+    for await (const m of c.fetch(`${Math.max(1, fromUid)}:*`, QUERY, { uid: true })) {
+      if (m.uid < fromUid) continue; // "n:*" always returns at least the last message
+      maxUid = Math.max(maxUid ?? 0, m.uid);
+      onMessage(toRemoteMessage(m, path));
+    }
+    return maxUid;
   }
 
   /**
-   * Headers and flags for every message with uid >= fromUid, delivered in batches.
-   * Uses an open-ended UID range so the server, not a cached UIDNEXT, decides what is new.
-   * Returns the highest uid seen, or null when nothing was new.
+   * Flag changes since a modseq. With QRESYNC enabled the library adds VANISHED to the fetch,
+   * and the server reports uids expunged since that modseq as expunge events, collected here.
    */
-  async fetchFrom(path: string, fromUid: number, onBatch: (msgs: RemoteMessage[]) => Promise<void>, batchSize = 200): Promise<number | null> {
-    return this.withFolder(path, async (c) => {
-      let maxUid: number | null = null;
-      let batch: RemoteMessage[] = [];
-      for await (const m of c.fetch(
-        `${Math.max(1, fromUid)}:*`,
-        {
-          uid: true,
-          flags: true,
-          envelope: true,
-          bodyStructure: true,
-          size: true,
-          headers: HEADERS,
-          bodyParts: [{ key: "1", start: 0, maxLength: SNIPPET_BYTES }],
-        },
-        { uid: true },
-      )) {
-        if (m.uid < fromUid) continue; // "n:*" always returns at least the last message
-        maxUid = Math.max(maxUid ?? 0, m.uid);
-        batch.push(toRemoteMessage(m));
-        if (batch.length >= batchSize) {
-          await onBatch(batch);
-          batch = [];
-        }
-      }
-      if (batch.length) await onBatch(batch);
-      return maxUid;
-    });
-  }
-
-  /** Flag changes since a modseq (CONDSTORE/QRESYNC), with the highest modseq seen. */
-  async fetchChangedFlags(path: string, sinceModseq: bigint): Promise<{ changes: { uid: number; flags: Flags }[]; maxModseq: bigint | null }> {
-    return this.withFolder(path, async (c) => {
-      const changes: { uid: number; flags: Flags }[] = [];
-      let maxModseq: bigint | null = null;
-      for await (const m of c.fetch("1:*", { uid: true, flags: true }, { uid: true, changedSince: sinceModseq })) {
+  private async changedSince(c: ImapFlow, path: string, since: bigint) {
+    const changes: { uid: number; flags: Flags }[] = [];
+    const vanished: number[] = [];
+    let maxModseq: bigint | null = null;
+    const onExpunge = (e: { path: string; uid?: number | undefined; vanished: boolean }) => {
+      if (e.uid && samePath(e.path, path)) vanished.push(e.uid);
+    };
+    c.on("expunge", onExpunge);
+    try {
+      for await (const m of c.fetch("1:*", { uid: true, flags: true }, { uid: true, changedSince: since })) {
         changes.push({ uid: m.uid, flags: toFlags(m.flags) });
         if (m.modseq && (maxModseq === null || m.modseq > maxModseq)) maxModseq = m.modseq;
       }
-      return { changes, maxModseq };
-    });
+    } finally {
+      c.off("expunge", onExpunge);
+    }
+    return { changes, vanished, maxModseq };
   }
 
-  /** Every flag in the folder. Only for small folders without CONDSTORE. */
-  async fetchAllFlags(path: string) {
-    return this.withFolder(path, async (c) => {
-      const out: { uid: number; flags: Flags }[] = [];
-      for await (const m of c.fetch("1:*", { uid: true, flags: true }, { uid: true })) {
-        out.push({ uid: m.uid, flags: toFlags(m.flags) });
-      }
-      return out;
-    });
-  }
+  // ---------- push ----------
 
-  /** All uids present on the server. Used to detect expunges. */
-  async allUids(path: string): Promise<Set<number>> {
-    return this.withFolder(path, async (c) => {
-      const r = await c.search({ all: true }, { uid: true });
-      return new Set(Array.isArray(r) ? r : []);
-    });
-  }
-
-  /** Park a second connection in IDLE on `path`; call onWake when anything happens. */
-  async watch(path: string, onWake: (kind: "exists" | "expunge" | "flags") => void, onClose: (err?: Error) => void) {
+  async watch(path: string, onWake: (kind: string) => void, onClose: (err?: Error) => void) {
     const c = this.makeClient();
     c.on("exists", () => onWake("exists"));
     c.on("expunge", () => onWake("expunge"));
@@ -312,38 +332,40 @@ export class ImapAdapter {
     this.idle = c; // imapflow auto-idles while the connection is otherwise quiet
   }
 
-  async setFlags(path: string, uid: number, set: Partial<Flags>) {
+  // ---------- actions ----------
+
+  async setFlags(path: string, ref: string, set: Partial<Flags>) {
     await this.withFolder(path, async (c) => {
-      const add = Object.entries(set).filter(([, v]) => v === true).map(([k]) => FLAG_NAMES[k as keyof Flags]);
-      const remove = Object.entries(set).filter(([, v]) => v === false).map(([k]) => FLAG_NAMES[k as keyof Flags]);
-      if (add.length) await c.messageFlagsAdd(String(uid), add, { uid: true });
-      if (remove.length) await c.messageFlagsRemove(String(uid), remove, { uid: true });
+      const add = flagList(set, true);
+      const remove = flagList(set, false);
+      if (add.length) await c.messageFlagsAdd(ref, add, { uid: true });
+      if (remove.length) await c.messageFlagsRemove(ref, remove, { uid: true });
     });
   }
 
-  /** Returns the uid in the destination, when the server reports it. */
-  async move(path: string, uid: number, destination: string): Promise<number | null> {
-    return this.withFolder(path, async (c) => {
-      const r = await c.messageMove(String(uid), destination, { uid: true });
-      return r ? (r.uidMap?.get(uid) ?? null) : null;
+  async move(fromPath: string, ref: string, toPath: string): Promise<string | null> {
+    return this.withFolder(fromPath, async (c) => {
+      const r = await c.messageMove(ref, toPath, { uid: true });
+      const uid = r ? r.uidMap?.get(Number(ref)) : undefined;
+      return uid ? String(uid) : null;
     });
   }
 
-  async expunge(path: string, uid: number) {
+  async expunge(path: string, ref: string) {
     await this.withFolder(path, async (c) => {
-      await c.messageDelete(String(uid), { uid: true });
+      await c.messageDelete(ref, { uid: true });
     });
   }
 
-  async append(path: string, raw: Buffer, flags: string[]): Promise<number | null> {
+  async append(path: string, raw: Buffer, flags: Partial<Flags>): Promise<string | null> {
     const c = await this.client();
-    const r = await c.append(path, raw, flags);
-    return r ? (r.uid ?? null) : null;
+    const r = await c.append(path, raw, flagList(flags, true));
+    return r && r.uid ? String(r.uid) : null;
   }
 
-  async source(path: string, uid: number): Promise<Buffer | null> {
+  async source(path: string, ref: string): Promise<Buffer | null> {
     return this.withFolder(path, async (c) => {
-      const m = await c.fetchOne(String(uid), { source: true }, { uid: true });
+      const m = await c.fetchOne(ref, { source: true }, { uid: true });
       return m ? (m.source ?? null) : null;
     });
   }

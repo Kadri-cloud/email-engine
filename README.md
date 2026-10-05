@@ -6,7 +6,7 @@ A self-hosted engine that turns any mailbox into one ordered event stream, with 
 
 ## What it does
 
-- **Syncs** any IMAP account with IDLE push, QRESYNC/CONDSTORE incremental sync, reconnect with backoff, and folder-role detection.
+- **Syncs** any IMAP account with IDLE push, QRESYNC/CONDSTORE incremental sync (expunges arrive as VANISHED, no per-poll UID scans), reconnect with backoff, and folder-role detection.
 - **Mints stable message IDs** that survive folder moves, and rebuilds threads with the JWZ algorithm.
 - **Appends every change to a cursor-ordered log.** Consumers read it by polling, by Server-Sent Events, or by webhook, and replay from any cursor after being offline.
 - **Executes actions idempotently** (client keys), journals each one, and can undo moves, flag changes, deletes, drafts and timers.
@@ -131,13 +131,13 @@ npm test                      # unit tests (threading)
 node test/smoke.mjs           # needs the engine and Dovecot running
 ```
 
-Layout: `src/schema.ts` (the specification as zod schemas), `src/store.ts` (SQLite), `src/imap.ts` (the only file that speaks IMAP/SMTP), `src/sync.ts` (runners, event log, actions, journal, timers), `src/scope.ts` (tokens and redaction), `src/api.ts` (HTTP and SSE), `src/threading.ts` (JWZ).
+Layout: `src/schema.ts` (the specification as zod schemas), `src/store.ts` (SQLite), `src/adapter.ts` (the adapter interface), `src/imap.ts` (the only file that speaks IMAP/SMTP), `src/sync.ts` (runners, event log, actions, journal, timers), `src/scope.ts` (tokens and redaction), `src/api.ts` (HTTP and SSE), `src/threading.ts` (JWZ).
 
 Two lessons the smoke test taught, kept here so nobody relearns them: a push that arrives while a sync is running must be queued, not dropped (the poll loop checks its dirty set before waiting); and a long-lived IMAP connection's cached UIDNEXT only refreshes on SELECT, so new mail is always fetched with an open-ended `lastUid:*` range and the next UID is derived from what the server returns.
 
 ## Not yet
 
-JMAP, Gmail API and Microsoft Graph adapters. MCP delivery. Webhook signatures and retry queue. QRESYNC `VANISHED` for expunge detection (currently a UID set comparison per poll). Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
+JMAP, Gmail API and Microsoft Graph adapters. MCP delivery. Webhook signatures and retry queue. Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
 
 ## Licence
 

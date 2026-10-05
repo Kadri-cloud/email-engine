@@ -1,17 +1,11 @@
 // The engine: one runner per account turns a mailbox into events in the log,
 // and the action API turns requests into journaled, reversible changes.
+// Runners are protocol-neutral; adapters report through the SyncSink.
 import { simpleParser } from "mailparser";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
-import { ImapAdapter, type RemoteMessage } from "./imap.js";
-import {
-  ActionParams,
-  type AccountConfig,
-  type ActionRequest,
-  type Address,
-  type Flags,
-  type Trust,
-  HIGH_RISK,
-} from "./schema.js";
+import type { Adapter, RemoteFolder, RemoteMessage, SyncSink } from "./adapter.js";
+import { ImapAdapter } from "./imap.js";
+import { ActionParams, type AccountConfig, type ActionRequest, type Address, type Flags, type Trust, HIGH_RISK } from "./schema.js";
 import { mintMessageId, newId, now, type MessageRow, type Store } from "./store.js";
 import { normalizeMessageId, normalizeSubject } from "./threading.js";
 
@@ -26,6 +20,13 @@ export class ScopeError extends Error {}
 
 type Folder = ReturnType<Store["upsertFolder"]>;
 
+export function makeAdapter(config: AccountConfig): Adapter {
+  switch (config.provider) {
+    case "imap":
+      return new ImapAdapter(config);
+  }
+}
+
 /** DMARC result plus prior correspondence -> trust level. No model involved. */
 export function trustFor(authResults: string | null, seenBefore: boolean): Trust {
   const a = (authResults ?? "").toLowerCase();
@@ -34,19 +35,21 @@ export function trustFor(authResults: string | null, seenBefore: boolean): Trust
   return "unverified";
 }
 
-class AccountRunner {
-  adapter: ImapAdapter;
-  folders = new Map<string, Folder>(); // path -> folder row
+const sameSet = (a: string[], b: string[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+
+class AccountRunner implements SyncSink {
+  adapter: Adapter;
+  folders = new Map<string, Folder>(); // provider path -> folder row
   private running = false;
   private wake: (() => void) | null = null;
   private dirty = new Set<string>();
 
   constructor(
     public id: string,
-    public config: Extract<AccountConfig, { provider: "imap" }>,
+    public config: AccountConfig,
     private engine: Engine,
   ) {
-    this.adapter = new ImapAdapter(config);
+    this.adapter = makeAdapter(config);
   }
 
   get store() {
@@ -57,6 +60,12 @@ class AccountRunner {
     for (const f of this.folders.values()) if (f.role === role) return f;
     return undefined;
   }
+  folderById(id: string): Folder | undefined {
+    for (const f of this.folders.values()) if (f.id === id) return f;
+    return undefined;
+  }
+
+  // ---------- lifecycle ----------
 
   async start() {
     this.running = true;
@@ -93,9 +102,9 @@ class AccountRunner {
     this.engine.status(this.id, "syncing", caps);
 
     for (const f of await this.adapter.listFolders()) {
-      this.folders.set(f.path, this.store.upsertFolder(this.id, f.path, f.role));
+      this.folders.set(f.path, this.store.upsertFolder(this.id, f.path, f.name, f.role));
     }
-    for (const f of this.folders.values()) await this.syncFolder(f);
+    await this.syncPaths([...this.folders.keys()]);
     this.engine.status(this.id, "connected", caps, now());
 
     const inbox = this.folderByRole("inbox");
@@ -122,7 +131,7 @@ class AccountRunner {
       });
     }
 
-    // Poll loop: inbox on wake or every 2 min as a safety net, other folders every 10 min.
+    // Poll loop: inbox on wake or every 2 min as a safety net, every folder every 10 min.
     let lastFull = Date.now();
     while (this.running) {
       // A push that lands while we are mid-sync is kept in `dirty`; only wait when nothing is pending.
@@ -141,88 +150,88 @@ class AccountRunner {
       const due = new Set(this.dirty);
       this.dirty.clear();
       if (inbox) due.add(inbox.path);
-      debug("poll", { account: this.id, reason, due: [...due] });
       if (Date.now() - lastFull > 600_000) {
         for (const p of this.folders.keys()) due.add(p);
         lastFull = Date.now();
       }
-      for (const p of due) {
-        const f = this.folders.get(p);
-        if (f) await this.syncFolder(f);
-      }
+      debug("poll", { account: this.id, reason, due: [...due] });
+      await this.syncPaths([...due]);
       this.engine.touch(this.id);
     }
   }
 
-  /** Bring one folder up to date and emit exactly the events that describe what changed. */
-  async syncFolder(folder: Folder) {
-    const snap = await this.adapter.snapshot(folder.path);
-
-    if (folder.uidvalidity !== null && folder.uidvalidity !== snap.uidValidity) {
-      // Server renumbered the folder. Forget uids, keep messages; the refetch
-      // re-links by Message-ID so nothing is emitted twice.
-      log("uidvalidity changed, full resync", { account: this.id, folder: folder.path });
-      for (const { message_id } of this.store.uidsInFolder(folder.id)) this.store.unlinkFolder(message_id, folder.id);
-      folder.uidnext = null;
-      folder.modseq = null;
-    }
-
-    // New messages. The server decides what is new: an open-ended range from the last known uid.
-    // Cached UIDNEXT/HIGHESTMODSEQ on a long-lived connection only refresh on SELECT, so they are never trusted here.
-    const fromUid = folder.uidnext ?? 1;
-    const isInitial = folder.uidnext === null;
-    const maxUid =
-      isInitial && snap.exists === 0
-        ? null // nothing to fetch from an empty folder, and "1:*" on one is a BAD on some servers
-        : await this.adapter.fetchFrom(folder.path, fromUid, async (batch) => {
-            for (const m of batch) this.ingest(folder, m, snap.uidValidity);
-          });
-    let nextUid = maxUid !== null ? maxUid + 1 : (folder.uidnext ?? snap.uidNext);
-    if (isInitial) nextUid = Math.max(nextUid, snap.uidNext);
-
-    // Flag changes.
-    let modseq: bigint | null = folder.modseq === null ? null : BigInt(folder.modseq);
-    if (isInitial) {
-      modseq = snap.highestModseq; // fresh from this connection's SELECT
-    } else if (modseq !== null && snap.highestModseq !== null) {
-      const { changes, maxModseq } = await this.adapter.fetchChangedFlags(folder.path, modseq);
-      for (const ch of changes) this.applyRemoteFlags(folder, ch.uid, ch.flags);
-      if (maxModseq !== null && maxModseq > modseq) modseq = maxModseq;
-    } else if (snap.exists <= 5000) {
-      // ponytail: full flag scan for small folders without CONDSTORE; large ones only learn flags on restart.
-      for (const ch of await this.adapter.fetchAllFlags(folder.path)) this.applyRemoteFlags(folder, ch.uid, ch.flags);
-    }
-
-    // Expunges: compare uid sets.
-    // ponytail: UID SEARCH ALL on every poll; QRESYNC VANISHED makes this free, wire it when the suite covers it.
-    if (folder.uidnext !== null) {
-      const known = this.store.uidsInFolder(folder.id);
-      if (known.length) {
-        const server = await this.adapter.allUids(folder.path);
-        for (const k of known) if (!server.has(k.uid)) this.removeFromFolder(folder, k.message_id);
-      }
-    }
-
-    this.store.setFolderState(folder.id, snap.uidValidity, nextUid, modseq === null ? null : Number(modseq));
-    folder.uidvalidity = snap.uidValidity;
-    folder.uidnext = nextUid;
-    folder.modseq = modseq === null ? null : Number(modseq);
+  /** Sync a set of folders through the adapter, persisting its state. Serialised per account. */
+  private syncing: Promise<void> = Promise.resolve();
+  syncPaths(paths: string[]): Promise<void> {
+    const run = async () => {
+      const folders: RemoteFolder[] = paths
+        .map((p) => this.folders.get(p))
+        .filter((f): f is Folder => !!f)
+        .map((f) => ({ path: f.path, name: f.name, role: f.role as RemoteFolder["role"] }));
+      if (!folders.length) return;
+      const state = this.store.getSyncState(this.id);
+      const next = await this.adapter.sync(folders, state, this);
+      this.store.setSyncState(this.id, next);
+    };
+    this.syncing = this.syncing.then(run, run);
+    return this.syncing;
   }
 
-  private ingest(folder: Folder, m: RemoteMessage, uidValidity: number) {
+  // ---------- SyncSink ----------
+
+  knownRefs(folderPath: string) {
+    const f = this.folders.get(folderPath);
+    return f ? this.store.refsInFolder(f.id) : [];
+  }
+
+  resetFolder(folderPath: string) {
+    const f = this.folders.get(folderPath);
+    if (!f) return;
+    log("folder renumbered, forgetting refs", { account: this.id, folder: folderPath });
+    for (const { message_id } of this.store.refsInFolder(f.id)) this.store.unlinkFolder(message_id, f.id);
+  }
+
+  seen(m: RemoteMessage, complete: boolean) {
     const headerId = normalizeMessageId(m.headerMessageId);
-    const id = mintMessageId(this.id, headerId, `${folder.id}:${uidValidity}:${m.uid}`);
+    // ponytail: header-less messages fall back to folder+ref; a header hash would survive renumbering too.
+    const id = mintMessageId(this.id, headerId, `${m.folderPaths[0] ?? ""}:${m.ref}`);
+    const folderIds = m.folderPaths.map((p) => this.folders.get(p)?.id).filter((x): x is string => !!x);
     const existing = this.store.messageById(id);
 
     if (existing) {
-      const before = this.store.foldersOfMessage(id).map((f) => f.folder_id);
-      if (before.includes(folder.id)) return;
-      this.store.linkFolder(id, folder.id, m.uid);
-      this.engine.emit("message.updated", this.id, m.date, {
+      const links = this.store.foldersOfMessage(id);
+      const before = links.map((l) => l.folder_id);
+      let after = [...before];
+      for (const fid of folderIds) {
+        const link = links.find((l) => l.folder_id === fid);
+        if (!link) {
+          this.store.linkFolder(id, fid, m.ref);
+          after.push(fid);
+        } else if (link.ref !== m.ref) {
+          this.store.linkFolder(id, fid, m.ref); // same folder, new ref (e.g. after a move back)
+        }
+      }
+      if (complete) {
+        for (const fid of before) {
+          if (!folderIds.includes(fid)) {
+            this.store.unlinkFolder(id, fid);
+            after = after.filter((x) => x !== fid);
+          }
+        }
+      }
+      const flagsChanged = JSON.stringify(existing.flags) !== JSON.stringify(m.flags);
+      if (flagsChanged) this.store.setFlags(id, m.flags);
+      const foldersChanged = !sameSet(before, after);
+      if (before.length === 0 && !flagsChanged) return; // silent relink after a renumbering
+      if (!foldersChanged && !flagsChanged) return;
+      this.engine.emit("message.updated", this.id, now(), {
         message_id: id,
         thread_id: existing.thread_id,
-        folder_ids: [...before, folder.id],
-        changes: { folder_ids: { before, after: [...before, folder.id] } },
+        folder_ids: after,
+        changes: {
+          ...(flagsChanged ? { flags: { before: existing.flags, after: m.flags } } : {}),
+          ...(foldersChanged ? { folder_ids: { before, after } } : {}),
+        },
       });
       return;
     }
@@ -250,12 +259,12 @@ class AccountRunner {
     };
     const cursor = this.store.transaction(() => {
       this.store.insertMessage(row);
-      this.store.linkFolder(id, folder.id, m.uid);
+      for (const fid of folderIds) this.store.linkFolder(id, fid, m.ref);
       this.store.upsertThread(row.thread_id, this.id, normalizeSubject(m.subject).base, m.date);
       return this.engine.emit("message.received", this.id, m.date, {
         message_id: id,
         thread_id: row.thread_id,
-        folder_ids: [folder.id],
+        folder_ids: folderIds,
         from: m.from,
         to: m.to,
         cc: m.cc,
@@ -270,6 +279,48 @@ class AccountRunner {
     });
     this.emitThread(row.thread_id, cursor);
   }
+
+  flags(folderPath: string, ref: string, flags: Flags) {
+    const f = this.folders.get(folderPath);
+    const m = f && this.store.messageByFolderRef(f.id, ref);
+    if (!m || JSON.stringify(m.flags) === JSON.stringify(flags)) return;
+    this.store.setFlags(m.id, flags);
+    this.engine.emit("message.updated", this.id, now(), {
+      message_id: m.id,
+      thread_id: m.thread_id,
+      folder_ids: this.store.foldersOfMessage(m.id).map((l) => l.folder_id),
+      changes: { flags: { before: m.flags, after: flags } },
+    });
+  }
+
+  gone(folderPath: string, ref: string) {
+    const f = this.folders.get(folderPath);
+    const m = f && this.store.messageByFolderRef(f.id, ref);
+    if (f && m) this.removeFromFolders(m, [f.id]);
+  }
+
+  destroyed(ref: string) {
+    const m = this.store.messageByRef(this.id, ref);
+    if (m) this.removeFromFolders(m, this.store.foldersOfMessage(m.id).map((l) => l.folder_id));
+  }
+
+  private removeFromFolders(m: MessageRow, folderIds: string[]) {
+    const before = this.store.foldersOfMessage(m.id).map((l) => l.folder_id);
+    for (const fid of folderIds) this.store.unlinkFolder(m.id, fid);
+    const after = before.filter((f) => !folderIds.includes(f));
+    if (after.length === 0) {
+      this.engine.emit("message.deleted", this.id, now(), { message_id: m.id, thread_id: m.thread_id, folder_ids: before });
+    } else {
+      this.engine.emit("message.updated", this.id, now(), {
+        message_id: m.id,
+        thread_id: m.thread_id,
+        folder_ids: after,
+        changes: { folder_ids: { before, after } },
+      });
+    }
+  }
+
+  // ---------- threading ----------
 
   /** Incremental threading: by reference, then by orphans that referenced us, then by reply subject. */
   private resolveThread(id: string, headerId: string | null, refs: string[], subject: string, date: string): string {
@@ -309,43 +360,12 @@ class AccountRunner {
     });
   }
 
-  private applyRemoteFlags(folder: Folder, uid: number, flags: Flags) {
-    const m = this.store.messageByFolderUid(folder.id, uid);
-    if (!m || JSON.stringify(m.flags) === JSON.stringify(flags)) return;
-    this.store.setFlags(m.id, flags);
-    const folderIds = this.store.foldersOfMessage(m.id).map((f) => f.folder_id);
-    this.engine.emit("message.updated", this.id, now(), {
-      message_id: m.id,
-      thread_id: m.thread_id,
-      folder_ids: folderIds,
-      changes: { flags: { before: m.flags, after: flags } },
-    });
-  }
-
-  private removeFromFolder(folder: Folder, messageId: string) {
-    const m = this.store.messageById(messageId);
-    if (!m) return;
-    const before = this.store.foldersOfMessage(messageId).map((f) => f.folder_id);
-    this.store.unlinkFolder(messageId, folder.id);
-    const after = before.filter((f) => f !== folder.id);
-    if (after.length === 0) {
-      this.engine.emit("message.deleted", this.id, now(), { message_id: messageId, thread_id: m.thread_id, folder_ids: before });
-    } else {
-      this.engine.emit("message.updated", this.id, now(), {
-        message_id: messageId,
-        thread_id: m.thread_id,
-        folder_ids: after,
-        changes: { folder_ids: { before, after } },
-      });
-    }
-  }
-
-  /** Where a message lives right now: first folder link, with its uid. */
-  locate(m: MessageRow): { folder: Folder; uid: number } {
+  /** Where a message lives right now: first folder link, with its provider ref. */
+  locate(m: MessageRow): { folder: Folder; ref: string } {
     const link = this.store.foldersOfMessage(m.id)[0];
-    const folder = link && [...this.folders.values()].find((f) => f.id === link.folder_id);
+    const folder = link && this.folderById(link.folder_id);
     if (!link || !folder) throw new Error(`message ${m.id} has no folder on the server`);
-    return { folder, uid: link.uid };
+    return { folder, ref: link.ref };
   }
 }
 
@@ -445,8 +465,8 @@ export class Engine {
   // ----- reads that need the server -----
   async fetchBody(m: MessageRow) {
     const r = this.runner(m.account);
-    const { folder, uid } = r.locate(m);
-    const raw = await r.adapter.source(folder.path, uid);
+    const { folder, ref } = r.locate(m);
+    const raw = await r.adapter.source(folder.path, ref);
     if (!raw) return null;
     const p = await simpleParser(raw);
     const text = p.text ?? "";
@@ -507,27 +527,26 @@ export class Engine {
       case "delete": {
         const m = this.store.messageById(a.params.message_id);
         if (!m) throw new Error("message no longer exists");
-        const { folder: cur, uid } = r.locate(m);
-        const back = [...r.folders.values()].find((f) => f.id === j.from_folder_id);
+        const { folder: cur, ref } = r.locate(m);
+        const back = r.folderById(j.from_folder_id);
         if (!back) throw new Error("original folder no longer exists");
-        await r.adapter.move(cur.path, uid, back.path);
-        await r.syncFolder(cur);
-        await r.syncFolder(back);
+        await r.adapter.move(cur.path, ref, back.path);
+        await r.syncPaths([cur.path, back.path]);
         break;
       }
       case "set_flags": {
         const m = this.store.messageById(a.params.message_id);
         if (!m) throw new Error("message no longer exists");
-        const { folder, uid } = r.locate(m);
-        await r.adapter.setFlags(folder.path, uid, j.before);
-        await r.syncFolder(folder);
+        const { folder, ref } = r.locate(m);
+        await r.adapter.setFlags(folder.path, ref, j.before);
+        await r.syncPaths([folder.path]);
         break;
       }
       case "create_draft": {
-        const drafts = [...r.folders.values()].find((f) => f.id === j.folder_id);
-        if (drafts) {
-          await r.adapter.expunge(drafts.path, j.uid);
-          await r.syncFolder(drafts);
+        const drafts = r.folderById(j.folder_id);
+        if (drafts && j.ref) {
+          await r.adapter.expunge(drafts.path, j.ref);
+          await r.syncPaths([drafts.path]);
         }
         break;
       }
@@ -590,66 +609,64 @@ export class Engine {
     switch (a.type as string) {
       case "move": {
         const m = this.need(p.message_id);
-        const { folder, uid } = r.locate(m);
-        const dest = [...r.folders.values()].find((f) => f.id === p.to_folder_id);
+        const { folder, ref } = r.locate(m);
+        const dest = r.folderById(p.to_folder_id);
         if (!dest) throw new Error(`unknown folder ${p.to_folder_id}`);
-        await r.adapter.move(folder.path, uid, dest.path);
-        await r.syncFolder(folder);
-        await r.syncFolder(dest);
+        await r.adapter.move(folder.path, ref, dest.path);
+        await r.syncPaths([folder.path, dest.path]);
         return { journal: { from_folder_id: folder.id, to_folder_id: dest.id }, result: { folder_id: dest.id } };
       }
       case "set_flags": {
         const m = this.need(p.message_id);
-        const { folder, uid } = r.locate(m);
-        await r.adapter.setFlags(folder.path, uid, p.set);
-        await r.syncFolder(folder);
+        const { folder, ref } = r.locate(m);
+        await r.adapter.setFlags(folder.path, ref, p.set);
+        await r.syncPaths([folder.path]);
         return { journal: { before: m.flags }, result: { flags: this.store.messageById(m.id)?.flags } };
       }
       case "delete": {
         const m = this.need(p.message_id);
-        const { folder, uid } = r.locate(m);
+        const { folder, ref } = r.locate(m);
         if (p.permanent) {
-          await r.adapter.expunge(folder.path, uid);
-          await r.syncFolder(folder);
+          await r.adapter.expunge(folder.path, ref);
+          await r.syncPaths([folder.path]);
           return { journal: null, result: { permanent: true } };
         }
         const trash = r.folderByRole("trash");
         if (!trash) throw new Error("account has no trash folder; use permanent: true");
-        await r.adapter.move(folder.path, uid, trash.path);
-        await r.syncFolder(folder);
-        await r.syncFolder(trash);
+        await r.adapter.move(folder.path, ref, trash.path);
+        await r.syncPaths([folder.path, trash.path]);
         return { journal: { from_folder_id: folder.id, to_folder_id: trash.id }, result: { folder_id: trash.id } };
       }
       case "create_draft": {
         const drafts = r.folderByRole("drafts");
         if (!drafts) throw new Error("account has no drafts folder");
         const { raw, messageId } = await this.compose(r, p);
-        const uid = await r.adapter.append(drafts.path, raw, ["\\Draft", "\\Seen"]);
-        await r.syncFolder(drafts);
+        const ref = await r.adapter.append(drafts.path, raw, { draft: true, seen: true });
+        await r.syncPaths([drafts.path]);
         const id = mintMessageId(a.account, messageId, "");
-        return { journal: uid ? { folder_id: drafts.id, uid } : null, result: { message_id: id } };
+        return { journal: ref ? { folder_id: drafts.id, ref } : null, result: { message_id: id } };
       }
       case "send": {
         let raw: Buffer;
         let messageId: string;
         if (p.draft_id) {
           const d = this.need(p.draft_id);
-          const { folder, uid } = r.locate(d);
-          const src = await r.adapter.source(folder.path, uid);
+          const { folder, ref } = r.locate(d);
+          const src = await r.adapter.source(folder.path, ref);
           if (!src) throw new Error("draft source unavailable");
           raw = src;
           messageId = d.header_message_id ?? "";
           await r.adapter.send(raw);
-          await r.adapter.expunge(folder.path, uid);
-          await r.syncFolder(folder);
+          await r.adapter.expunge(folder.path, ref);
+          await r.syncPaths([folder.path]);
         } else {
           ({ raw, messageId } = await this.compose(r, p, true));
           await r.adapter.send(raw);
         }
         const sent = r.folderByRole("sent");
         if (sent) {
-          await r.adapter.append(sent.path, raw, ["\\Seen"]);
-          await r.syncFolder(sent);
+          await r.adapter.append(sent.path, raw, { seen: true });
+          await r.syncPaths([sent.path]);
         }
         return { journal: null, result: { message_id: mintMessageId(a.account, messageId, "") } };
       }
