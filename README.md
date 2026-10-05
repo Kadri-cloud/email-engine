@@ -12,6 +12,8 @@ A self-hosted engine that turns any mailbox into one ordered event stream, with 
 - **Executes actions idempotently** (client keys), journals each one, and can undo moves, flag changes, deletes, drafts and timers.
 - **Proposes before it acts** when asked: a proposed action waits in a queue until approved or rejected.
 - **Computes a trust level** per message from DMARC/DKIM results and prior correspondence. No model is ever involved.
+- **Scopes every consumer** with a token that names its accounts, folder roles, event types and actions. A `propose_only` token's writes become proposals. A token can redact one-time codes, card numbers and IBANs from everything it reads.
+- **Lets plug-ins publish** derived events (`classify.newsletter`, `extract.invoice`) onto the same log, under their own namespace.
 - **Owns the clock**: schedule a timer, receive a `timer.fired` event. Snooze, follow-ups and scheduled send are built on it.
 - **Indexes locally** in SQLite with full-text search. Bodies are fetched on demand.
 
@@ -45,19 +47,21 @@ node test/smoke.mjs           # end-to-end check: push, actions, undo, proposals
 
 ## HTTP API
 
-All routes except `/health` need `Authorization: Bearer $ENGINE_TOKEN`.
+All routes except `/health` need `Authorization: Bearer <token>`: either the admin token from `ENGINE_TOKEN`, or a scoped token created with `POST /tokens`.
 
 | Route | Purpose |
 | --- | --- |
 | `GET /health` | Cursor and account status |
-| `GET /events?after=N&limit=500` | The log from a cursor |
+| `GET /events?after=N&limit=500` | The log from a cursor, filtered to the token's scope |
 | `GET /stream?after=N` | Server-Sent Events: replay from a cursor, then live |
+| `POST /events` | Publish a derived event (tokens with `publish: true`) |
 | `GET /search?q=` | Full-text search over the local index |
 | `GET /messages/:id` | Message metadata and folder links |
 | `GET /messages/:id/body` | Parsed body, fetched from the server on demand |
 | `GET /threads/:id` | Messages in a thread, in order |
 | `GET /accounts`, `POST /accounts` | List or connect mailboxes |
 | `GET /accounts/:id/folders` | Folders with their roles |
+| `GET /tokens`, `POST /tokens`, `DELETE /tokens/:id` | Scoped tokens (admin only). The secret is returned once |
 | `POST /actions` | Execute an action. Add `?mode=propose` to queue it instead |
 | `GET /actions/:id` | Action status, journal and result |
 | `POST /actions/:id/approve`, `/reject`, `/undo` | Move an action through its lifecycle |
@@ -76,6 +80,22 @@ curl -X POST "http://127.0.0.1:8080/actions?mode=propose" \
   -d '{"client_key":"my-key-1","type":"move","params":{"message_id":"msg_...","to_folder_id":"fld_..."}}'
 ```
 
+### Scoped tokens
+
+A token is the permission one agent holds. Empty lists mean "all".
+
+```bash
+curl -X POST http://127.0.0.1:8080/tokens -H "authorization: Bearer test" -H "content-type: application/json" -d '{
+  "name": "newsletter-triage",
+  "accounts": ["acc_..."], "folders": ["inbox"],
+  "events": ["message.received", "message.updated", "action.updated"],
+  "actions": ["search", "get_message", "move", "set_flags", "propose"],
+  "redact": ["otp", "card"], "mode": "propose_only"
+}'
+```
+
+With `mode: "propose_only"` every write the agent makes lands in the queue as a proposal, and only a token holding `approve` (or the admin) can execute it. Redaction classes: `otp`, `card`, `iban`, `email`, `phone`, or `re:<pattern>`. Every read response carries `as_of`, the account's last successful sync, so an agent knows how stale its view is.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -84,6 +104,7 @@ curl -X POST "http://127.0.0.1:8080/actions?mode=propose" \
 | `ENGINE_PORT` | `8080` | HTTP port |
 | `ENGINE_DATA` | `./data` | Directory for the SQLite file |
 | `ENGINE_WEBHOOK` | unset | POST every event to this URL |
+| `ENGINE_DEBUG` | unset | Log idle wake-ups and poll decisions |
 
 ## Development
 
@@ -92,11 +113,13 @@ npm test                      # unit tests (threading)
 node test/smoke.mjs           # needs the engine and Dovecot running
 ```
 
-Layout: `src/schema.ts` (the specification as zod schemas), `src/store.ts` (SQLite), `src/imap.ts` (the only file that speaks IMAP/SMTP), `src/sync.ts` (runners, event log, actions, journal, timers), `src/api.ts` (HTTP and SSE), `src/threading.ts` (JWZ).
+Layout: `src/schema.ts` (the specification as zod schemas), `src/store.ts` (SQLite), `src/imap.ts` (the only file that speaks IMAP/SMTP), `src/sync.ts` (runners, event log, actions, journal, timers), `src/scope.ts` (tokens and redaction), `src/api.ts` (HTTP and SSE), `src/threading.ts` (JWZ).
+
+Two lessons the smoke test taught, kept here so nobody relearns them: a push that arrives while a sync is running must be queued, not dropped (the poll loop checks its dirty set before waiting); and a long-lived IMAP connection's cached UIDNEXT only refreshes on SELECT, so new mail is always fetched with an open-ended `lastUid:*` range and the next UID is derived from what the server returns.
 
 ## Not yet
 
-JMAP, Gmail API and Microsoft Graph adapters. Scoped per-agent tokens. Redaction on read. Webhook signatures and retry queue. QRESYNC `VANISHED` for expunge detection (currently a UID set comparison per poll). Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
+JMAP, Gmail API and Microsoft Graph adapters. MCP delivery. Webhook signatures and retry queue. QRESYNC `VANISHED` for expunge detection (currently a UID set comparison per poll). Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
 
 ## Licence
 

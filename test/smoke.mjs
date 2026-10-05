@@ -181,6 +181,124 @@ await step("cursor log: strictly increasing, no gaps", async () => {
   return `${events.length} events contiguous`;
 });
 
+// ---------- scoped tokens ----------
+const apiAs = async (secret, path, init = {}) => {
+  const r = await fetch(BASE + path, { ...init, headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" } });
+  return { status: r.status, body: await r.json().catch(() => null) };
+};
+let triage; // propose-only token limited to the inbox, redacting one-time codes and cards
+let otpMsg;
+
+await step("tokens: admin creates a scoped token, secret shown once", async () => {
+  const t = await api("/tokens", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "newsletter-triage", accounts: [account.id], folders: ["inbox"],
+      events: ["message.received", "message.updated", "action.updated"],
+      actions: ["search", "get_message", "move", "set_flags", "propose"],
+      redact: ["otp", "card"], mode: "propose_only",
+    }),
+  });
+  assert.match(t.secret, /^tok_/);
+  triage = t;
+  const list = await api("/tokens");
+  assert.ok(list.some((x) => x.id === t.id) && !list.some((x) => x.secret), "secret must not be listed");
+  return t.id;
+});
+
+await step("scope: filtered log shows only allowed types in allowed folders", async () => {
+  const { status, body } = await apiAs(triage.secret, "/events?after=0&limit=2000");
+  assert.equal(status, 200);
+  assert.ok(body.events.length > 0, "no events visible");
+  const types = new Set(body.events.map((e) => e.type));
+  assert.ok(!types.has("account.status") && !types.has("thread.updated"), `leaked types: ${[...types]}`);
+  const inbox = byRole("inbox").id;
+  for (const e of body.events) if (e.type.startsWith("message.")) assert.ok(e.payload.folder_ids.includes(inbox), `non-inbox event leaked: ${JSON.stringify(e.payload.folder_ids)}`);
+  return `${body.events.length} visible, next=${body.next}`;
+});
+
+await step("scope: propose_only token's direct call becomes a proposal; it cannot approve, admin can", async () => {
+  const { status, body: a } = await apiAs(triage.secret, "/actions", { method: "POST", body: JSON.stringify({ client_key: key(), type: "set_flags", params: { message_id: msg.message_id, set: { flagged: false } } }) });
+  assert.equal(status, 200, JSON.stringify(a));
+  assert.equal(a.status, "proposed");
+  assert.equal(a.requested_by, "newsletter-triage");
+  const denied = await apiAs(triage.secret, `/actions/${a.id}/approve`, { method: "POST" });
+  assert.equal(denied.status, 403);
+  const ok = await api(`/actions/${a.id}/approve`, { method: "POST" });
+  assert.equal(ok.status, "executed");
+  return "proposal by agent, approval by admin";
+});
+
+await step("scope: action outside the allowed list is refused", async () => {
+  const { status } = await apiAs(triage.secret, "/actions", { method: "POST", body: JSON.stringify({ client_key: key(), type: "delete", params: { message_id: msg.message_id } }) });
+  assert.equal(status, 403);
+  return "delete refused with 403";
+});
+
+await step("redaction: codes and card numbers are masked for the scoped token only", async () => {
+  cursor = (await api("/health")).cursor;
+  const c = new ImapFlow({ host: "127.0.0.1", port: 993, secure: true, auth: { user: "alice", pass: "pass" }, tls: { rejectUnauthorized: false }, logger: false });
+  await c.connect();
+  const stamp = Date.now();
+  await c.append("INBOX", [
+    `From: "Bank" <noreply@bank.example>`, `To: alice@example.com`, `Subject: Your code ${stamp}`,
+    `Date: ${new Date().toUTCString()}`, `Message-ID: <otp-${stamp}@bank.example>`, `Content-Type: text/plain; charset=utf-8`, ``,
+    `Your verification code is 482913. It expires in 10 minutes.`, `Card on file: 4111 1111 1111 1111. Order 20261006 ships Monday.`,
+  ].join("\r\n"));
+  await c.logout();
+  const { event } = await waitFor(cursor, (e) => e.type === "message.received" && e.payload.subject === `Your code ${stamp}`, "otp message");
+  otpMsg = event.payload;
+  const scoped = await apiAs(triage.secret, `/messages/${otpMsg.message_id}/body`);
+  assert.equal(scoped.status, 200);
+  assert.ok(scoped.body.text.includes("[OTP]") && !scoped.body.text.includes("482913"), `otp leaked: ${scoped.body.text}`);
+  assert.ok(scoped.body.text.includes("[CARD]") && !scoped.body.text.includes("4111"), `card leaked: ${scoped.body.text}`);
+  assert.ok(scoped.body.text.includes("20261006"), "order number must survive");
+  const admin = await api(`/messages/${otpMsg.message_id}/body`);
+  assert.ok(admin.text.includes("482913"), "admin should see the raw body");
+  const ev = await apiAs(triage.secret, `/events?after=${cursor}`);
+  const seen = ev.body.events.find((e) => e.payload?.message_id === otpMsg.message_id);
+  assert.ok(seen && !seen.payload.snippet.includes("482913"), "snippet in event not redacted");
+  return "body and snippet masked for agent, raw for admin";
+});
+
+await step("scope: a message moved out of the allowed folder disappears, and returns", async () => {
+  const archive = byRole("archive");
+  const mv = await action("move", { message_id: otpMsg.message_id, to_folder_id: archive.id });
+  assert.equal(mv.status, "executed");
+  const hidden = await apiAs(triage.secret, `/messages/${otpMsg.message_id}`);
+  assert.equal(hidden.status, 404);
+  const back = await api(`/actions/${mv.id}/undo`, { method: "POST" });
+  assert.equal(back.status, "reverted");
+  const shown = await apiAs(triage.secret, `/messages/${otpMsg.message_id}`);
+  assert.equal(shown.status, 200);
+  assert.ok(shown.body.as_of, "as_of missing");
+  return "404 while archived, 200 when back, as_of present";
+});
+
+await step("publish: a plug-in token appends a derived event; a non-publisher cannot", async () => {
+  const plug = await api("/tokens", { method: "POST", body: JSON.stringify({ name: "classifier", accounts: [account.id], publish: true, actions: ["search"] }) });
+  const pub = await apiAs(plug.secret, "/events", { method: "POST", body: JSON.stringify({ type: "classify.newsletter", account: account.id, payload: { message_id: otpMsg.message_id, label: "transactional", confidence: 0.93 } }) });
+  assert.equal(pub.status, 201, JSON.stringify(pub.body));
+  const { events } = await api(`/events?after=${pub.body.cursor - 1}&limit=1`);
+  assert.equal(events[0].type, "classify.newsletter");
+  assert.equal(events[0].payload.published_by, "classifier");
+  const reserved = await apiAs(plug.secret, "/events", { method: "POST", body: JSON.stringify({ type: "message.received", account: account.id, payload: {} }) });
+  assert.equal(reserved.status, 400);
+  const denied = await apiAs(triage.secret, "/events", { method: "POST", body: JSON.stringify({ type: "classify.x", account: account.id, payload: {} }) });
+  assert.equal(denied.status, 403);
+  await api(`/tokens/${plug.id}`, { method: "DELETE" });
+  return "derived event stored with publisher name; core types reserved";
+});
+
+await step("tokens: expired token is unauthorized; deleted token is unauthorized", async () => {
+  const old = await api("/tokens", { method: "POST", body: JSON.stringify({ name: "stale", expires_at: "2020-01-01T00:00:00Z" }) });
+  assert.equal((await apiAs(old.secret, "/accounts")).status, 401);
+  await api(`/tokens/${old.id}`, { method: "DELETE" });
+  await api(`/tokens/${triage.id}`, { method: "DELETE" });
+  assert.equal((await apiAs(triage.secret, "/accounts")).status, 401);
+  return "both 401";
+});
+
 let failed = 0;
 for (const [name, status, info] of results) {
   if (status === "FAIL") failed++;

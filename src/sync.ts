@@ -17,9 +17,12 @@ import { normalizeMessageId, normalizeSubject } from "./threading.js";
 
 const log = (msg: string, extra: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ t: now(), msg, ...extra }));
+const debug = process.env.ENGINE_DEBUG ? log : () => {};
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DAY = 86_400_000;
+
+export class ScopeError extends Error {}
 
 type Folder = ReturnType<Store["upsertFolder"]>;
 
@@ -102,31 +105,43 @@ class AccountRunner {
         this.adapter
           .watch(
             inbox.path,
-            () => {
+            (kind) => {
+              debug("idle wake", { account: this.id, kind, waiting: !!this.wake });
               this.dirty.add(inbox.path);
               this.wake?.();
             },
-            () => resolve(),
+            (err) => {
+              debug("idle closed", { account: this.id, error: err?.message });
+              resolve();
+            },
           )
-          .catch(() => resolve());
+          .catch((e) => {
+            debug("idle failed to start", { account: this.id, error: String(e?.message ?? e) });
+            resolve();
+          });
       });
     }
 
     // Poll loop: inbox on wake or every 2 min as a safety net, other folders every 10 min.
     let lastFull = Date.now();
     while (this.running) {
-      const closed = await Promise.race([
-        new Promise<"wake">((r) => (this.wake = () => r("wake"))),
-        sleep(120_000).then(() => "tick" as const),
-        idleClosed?.then(() => "closed" as const) ?? new Promise<never>(() => {}),
-      ]);
-      this.wake = null;
+      // A push that lands while we are mid-sync is kept in `dirty`; only wait when nothing is pending.
+      let reason: "wake" | "tick" | "closed" = "wake";
+      if (this.dirty.size === 0) {
+        reason = await Promise.race([
+          new Promise<"wake">((r) => (this.wake = () => r("wake"))),
+          sleep(120_000).then(() => "tick" as const),
+          idleClosed?.then(() => "closed" as const) ?? new Promise<never>(() => {}),
+        ]);
+        this.wake = null;
+      }
       if (!this.running) return;
-      if (closed === "closed") throw new Error("idle connection closed");
+      if (reason === "closed") throw new Error("idle connection closed");
 
       const due = new Set(this.dirty);
       this.dirty.clear();
       if (inbox) due.add(inbox.path);
+      debug("poll", { account: this.id, reason, due: [...due] });
       if (Date.now() - lastFull > 600_000) {
         for (const p of this.folders.keys()) due.add(p);
         lastFull = Date.now();
@@ -135,7 +150,7 @@ class AccountRunner {
         const f = this.folders.get(p);
         if (f) await this.syncFolder(f);
       }
-      this.engine.status(this.id, "connected", null, now());
+      this.engine.touch(this.id);
     }
   }
 
@@ -152,26 +167,30 @@ class AccountRunner {
       folder.modseq = null;
     }
 
-    // New messages.
+    // New messages. The server decides what is new: an open-ended range from the last known uid.
+    // Cached UIDNEXT/HIGHESTMODSEQ on a long-lived connection only refresh on SELECT, so they are never trusted here.
     const fromUid = folder.uidnext ?? 1;
-    if (snap.uidNext > fromUid) {
-      await this.adapter.fetchFrom(folder.path, fromUid, async (batch) => {
-        for (const m of batch) this.ingest(folder, m, snap.uidValidity);
-      });
-    }
+    const isInitial = folder.uidnext === null;
+    const maxUid =
+      isInitial && snap.exists === 0
+        ? null // nothing to fetch from an empty folder, and "1:*" on one is a BAD on some servers
+        : await this.adapter.fetchFrom(folder.path, fromUid, async (batch) => {
+            for (const m of batch) this.ingest(folder, m, snap.uidValidity);
+          });
+    let nextUid = maxUid !== null ? maxUid + 1 : (folder.uidnext ?? snap.uidNext);
+    if (isInitial) nextUid = Math.max(nextUid, snap.uidNext);
 
     // Flag changes.
-    if (folder.uidnext !== null) {
-      if (snap.highestModseq && folder.modseq) {
-        if (snap.highestModseq > BigInt(folder.modseq)) {
-          for (const ch of await this.adapter.fetchChangedFlags(folder.path, BigInt(folder.modseq))) {
-            this.applyRemoteFlags(folder, ch.uid, ch.flags);
-          }
-        }
-      } else if (snap.exists <= 5000) {
-        // ponytail: full flag scan for small folders without CONDSTORE; large ones only learn flags on restart.
-        for (const ch of await this.adapter.fetchAllFlags(folder.path)) this.applyRemoteFlags(folder, ch.uid, ch.flags);
-      }
+    let modseq: bigint | null = folder.modseq === null ? null : BigInt(folder.modseq);
+    if (isInitial) {
+      modseq = snap.highestModseq; // fresh from this connection's SELECT
+    } else if (modseq !== null && snap.highestModseq !== null) {
+      const { changes, maxModseq } = await this.adapter.fetchChangedFlags(folder.path, modseq);
+      for (const ch of changes) this.applyRemoteFlags(folder, ch.uid, ch.flags);
+      if (maxModseq !== null && maxModseq > modseq) modseq = maxModseq;
+    } else if (snap.exists <= 5000) {
+      // ponytail: full flag scan for small folders without CONDSTORE; large ones only learn flags on restart.
+      for (const ch of await this.adapter.fetchAllFlags(folder.path)) this.applyRemoteFlags(folder, ch.uid, ch.flags);
     }
 
     // Expunges: compare uid sets.
@@ -184,10 +203,10 @@ class AccountRunner {
       }
     }
 
-    this.store.setFolderState(folder.id, snap.uidValidity, snap.uidNext, snap.highestModseq === null ? null : Number(snap.highestModseq));
+    this.store.setFolderState(folder.id, snap.uidValidity, nextUid, modseq === null ? null : Number(modseq));
     folder.uidvalidity = snap.uidValidity;
-    folder.uidnext = snap.uidNext;
-    folder.modseq = snap.highestModseq === null ? null : Number(snap.highestModseq);
+    folder.uidnext = nextUid;
+    folder.modseq = modseq === null ? null : Number(modseq);
   }
 
   private ingest(folder: Folder, m: RemoteMessage, uidValidity: number) {
@@ -364,16 +383,24 @@ export class Engine {
       log("webhook delivery failed", { error: String(e?.message ?? e) });
     }
   }
+  /** Record a status change. Emits account.status only when the status or capabilities actually change. */
   status(account: string, status: string, caps: unknown, error?: string | null) {
+    const before = this.store.accountById(account);
     const lastSync = status === "connected" ? now() : undefined;
     this.store.setAccountStatus(account, status as any, (caps as any) ?? undefined, lastSync);
+    const capsChanged = caps && JSON.stringify(caps) !== JSON.stringify(before?.capabilities ?? null);
+    if (before?.status === status && !capsChanged && !error) return;
     this.emit("account.status", account, now(), {
       account_id: account,
       status,
-      capabilities: caps ?? this.store.accounts().find((a) => a.id === account)?.capabilities ?? null,
-      last_sync: lastSync ?? null,
+      capabilities: caps ?? before?.capabilities ?? null,
+      last_sync: lastSync ?? before?.last_sync ?? null,
       ...(error ? { error } : {}),
     });
+  }
+  /** A successful sync pass: refresh last_sync without an event. Staleness is read from here. */
+  touch(account: string) {
+    this.store.setAccountStatus(account, "connected", undefined, now());
   }
 
   // ----- lifecycle -----
@@ -436,11 +463,12 @@ export class Engine {
     return this.store.actionById(id);
   }
 
-  async submitAction(req: ActionRequest, requestedBy: string, mode: "direct" | "propose") {
+  async submitAction(req: ActionRequest, requestedBy: string, mode: "direct" | "propose", allowedAccounts: string[] = []) {
     const existing = this.store.actionByKey(req.client_key);
     if (existing) return existing; // idempotent: same key, same answer
     const params = ActionParams[req.type].parse(req.params);
     const account = this.accountFor(req.type, params);
+    if (allowedAccounts.length && !allowedAccounts.includes(account)) throw new ScopeError("account not in token scope");
     const id = newId("act");
     const status = mode === "propose" ? "proposed" : "approved";
     this.store.insertAction({ id, client_key: req.client_key, type: req.type, account, params, status, requested_by: requestedBy });

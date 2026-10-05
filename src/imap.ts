@@ -232,41 +232,51 @@ export class ImapAdapter {
     return this.withFolder(path, async (_c, snap) => snap);
   }
 
-  /** Headers and flags for every message with uid >= fromUid, in uid windows. */
-  async fetchFrom(path: string, fromUid: number, onBatch: (msgs: RemoteMessage[], snap: FolderSnapshot) => Promise<void>, window = 500) {
-    await this.withFolder(path, async (c, snap) => {
-      for (let lo = Math.max(1, fromUid); lo < Math.max(snap.uidNext, fromUid + 1); lo += window) {
-        const hi = Math.min(lo + window - 1, snap.uidNext - 1);
-        if (hi < lo) break;
-        const batch: RemoteMessage[] = [];
-        for await (const m of c.fetch(
-          `${lo}:${hi}`,
-          {
-            uid: true,
-            flags: true,
-            envelope: true,
-            bodyStructure: true,
-            size: true,
-            headers: HEADERS,
-            bodyParts: [{ key: "1", start: 0, maxLength: SNIPPET_BYTES }],
-          },
-          { uid: true },
-        )) {
-          if (m.uid >= fromUid) batch.push(toRemoteMessage(m));
+  /**
+   * Headers and flags for every message with uid >= fromUid, delivered in batches.
+   * Uses an open-ended UID range so the server, not a cached UIDNEXT, decides what is new.
+   * Returns the highest uid seen, or null when nothing was new.
+   */
+  async fetchFrom(path: string, fromUid: number, onBatch: (msgs: RemoteMessage[]) => Promise<void>, batchSize = 200): Promise<number | null> {
+    return this.withFolder(path, async (c) => {
+      let maxUid: number | null = null;
+      let batch: RemoteMessage[] = [];
+      for await (const m of c.fetch(
+        `${Math.max(1, fromUid)}:*`,
+        {
+          uid: true,
+          flags: true,
+          envelope: true,
+          bodyStructure: true,
+          size: true,
+          headers: HEADERS,
+          bodyParts: [{ key: "1", start: 0, maxLength: SNIPPET_BYTES }],
+        },
+        { uid: true },
+      )) {
+        if (m.uid < fromUid) continue; // "n:*" always returns at least the last message
+        maxUid = Math.max(maxUid ?? 0, m.uid);
+        batch.push(toRemoteMessage(m));
+        if (batch.length >= batchSize) {
+          await onBatch(batch);
+          batch = [];
         }
-        if (batch.length) await onBatch(batch, snap);
       }
+      if (batch.length) await onBatch(batch);
+      return maxUid;
     });
   }
 
-  /** Flag changes since a modseq (CONDSTORE/QRESYNC). */
-  async fetchChangedFlags(path: string, sinceModseq: bigint): Promise<{ uid: number; flags: Flags; modseq: bigint | null }[]> {
+  /** Flag changes since a modseq (CONDSTORE/QRESYNC), with the highest modseq seen. */
+  async fetchChangedFlags(path: string, sinceModseq: bigint): Promise<{ changes: { uid: number; flags: Flags }[]; maxModseq: bigint | null }> {
     return this.withFolder(path, async (c) => {
-      const out: { uid: number; flags: Flags; modseq: bigint | null }[] = [];
+      const changes: { uid: number; flags: Flags }[] = [];
+      let maxModseq: bigint | null = null;
       for await (const m of c.fetch("1:*", { uid: true, flags: true }, { uid: true, changedSince: sinceModseq })) {
-        out.push({ uid: m.uid, flags: toFlags(m.flags), modseq: m.modseq ?? null });
+        changes.push({ uid: m.uid, flags: toFlags(m.flags) });
+        if (m.modseq && (maxModseq === null || m.modseq > maxModseq)) maxModseq = m.modseq;
       }
-      return out;
+      return { changes, maxModseq };
     });
   }
 

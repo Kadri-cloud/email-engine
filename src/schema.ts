@@ -210,16 +210,25 @@ export type ActionRequest = z.infer<typeof ActionRequest>;
 export const Token = z.object({
   id: z.string(),
   name: z.string(),
-  accounts: z.array(z.string()), // empty = all
-  folders: z.array(FolderRole), // empty = all
-  events: z.array(z.string()), // empty = all
-  actions: z.array(z.string()), // empty = all
+  accounts: z.array(z.string()).default([]), // empty = all
+  folders: z.array(FolderRole).default([]), // empty = all
+  events: z.array(z.string()).default([]), // empty = all
+  actions: z.array(z.string()).default([]), // empty = all
   redact: z.array(z.string()).default([]),
   mode: z.enum(["propose_only", "direct"]).default("propose_only"),
   publish: z.boolean().default(false), // plug-ins may append derived events
   expires_at: z.string().nullable().default(null),
 });
 export type Token = z.infer<typeof Token>;
+export const TokenCreate = Token.omit({ id: true });
+
+/** A derived event published by a plug-in. Namespaced type, never one of the core seven. */
+export const PublishRequest = z.object({
+  type: z.string().regex(/^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_.-]*$/, "namespaced like classify.newsletter"),
+  account: z.string(),
+  occurred_at: z.string().optional(),
+  payload: z.unknown(),
+});
 
 // ---------- account config ----------
 

@@ -9,6 +9,7 @@ import type {
   Address,
   Capabilities,
   Flags,
+  Token,
   Trust,
 } from "./schema.js";
 
@@ -227,6 +228,10 @@ export function openStore(path: string) {
     ),
     dueTimers: db.prepare(`SELECT * FROM timers WHERE fired = 0 AND fire_at <= ? ORDER BY fire_at LIMIT 100`),
     markTimer: db.prepare(`UPDATE timers SET fired = ? WHERE id = ?`),
+    insertToken: db.prepare(`INSERT INTO tokens (id, secret_hash, scope) VALUES (?, ?, ?)`),
+    tokenByHash: db.prepare(`SELECT id, scope FROM tokens WHERE secret_hash = ?`),
+    tokens: db.prepare(`SELECT id, scope FROM tokens`),
+    deleteToken: db.prepare(`DELETE FROM tokens WHERE id = ?`),
   };
 
   const parseAction = (r: any) =>
@@ -425,6 +430,27 @@ export function openStore(path: string) {
     },
     markTimer(id: string, state: 1 | 2) {
       q.markTimer.run(state, id); // 1 = fired, 2 = cancelled
+    },
+
+    // ----- tokens -----
+    insertToken(id: string, secretHash: string, scope: Omit<Token, "id">) {
+      q.insertToken.run(id, secretHash, JSON.stringify(scope));
+    },
+    tokenByHash(hash: string): Token | null {
+      const r = q.tokenByHash.get(hash) as any;
+      return r ? { ...JSON.parse(r.scope), id: r.id } : null;
+    },
+    tokens(): Token[] {
+      return (q.tokens.all() as any[]).map((r) => ({ ...JSON.parse(r.scope), id: r.id }));
+    },
+    deleteToken(id: string): boolean {
+      return q.deleteToken.run(id).changes > 0;
+    },
+    accountById(id: string) {
+      const a = (q.accounts.all() as any[]).find((a) => a.id === id);
+      return a
+        ? { ...a, config: JSON.parse(a.config) as AccountConfig, capabilities: a.capabilities ? (JSON.parse(a.capabilities) as Capabilities) : null }
+        : null;
     },
 
     transaction<T>(fn: () => T): T {
