@@ -10,7 +10,7 @@ import { ImapAdapter } from "./imap.js";
 import { InboundAdapter } from "./inbound.js";
 import { JmapAdapter } from "./jmap.js";
 import { ActionParams, type AccountConfig, type ActionRequest, type Address, type Flags, type Trust, HIGH_RISK } from "./schema.js";
-import { mintMessageId, newId, now, type MessageRow, type Store } from "./store.js";
+import { fingerprintOf, mintMessageId, newId, now, type MessageRow, type Store } from "./store.js";
 import { normalizeMessageId, normalizeSubject } from "./threading.js";
 
 const log = (msg: string, extra: Record<string, unknown> = {}) =>
@@ -222,10 +222,17 @@ class AccountRunner implements SyncSink {
 
   seen(m: RemoteMessage, complete: boolean) {
     const headerId = normalizeMessageId(m.headerMessageId);
-    // ponytail: header-less messages fall back to folder+ref; a header hash would survive renumbering too.
-    const id = mintMessageId(this.id, headerId, `${m.folderPaths[0] ?? ""}:${m.ref}`);
+    const fingerprint = fingerprintOf(m);
+    let id = mintMessageId(this.id, headerId, fingerprint);
     const folderIds = m.folderPaths.map((p) => this.folders.get(p)?.id).filter((x): x is string => !!x);
-    const existing = this.store.messageById(id);
+    let existing = this.store.messageById(id);
+
+    if (existing && headerId && existing.fingerprint && existing.fingerprint !== fingerprint) {
+      // Same Message-ID, different message: a reused or forged header. Mint this one from both.
+      id = mintMessageId(this.id, `${headerId}\n${fingerprint}`, fingerprint);
+      existing = this.store.messageById(id);
+    }
+    if (existing && !existing.fingerprint) this.store.setFingerprint(id, fingerprint);
 
     if (existing) {
       const links = this.store.foldersOfMessage(id);
@@ -288,6 +295,7 @@ class AccountRunner implements SyncSink {
       size: m.size,
       snippet: m.snippet,
       has_attachments: m.hasAttachments,
+      fingerprint,
     };
     const cursor = this.store.transaction(() => {
       this.store.insertMessage(row);

@@ -10,7 +10,7 @@ A self-hosted engine that turns any mailbox into one ordered event stream, with 
 - **Syncs** any JMAP account (Fastmail, Stalwart) with state-based delta sync, EventSource push, native threads and server-side filing of sent mail. Both adapters implement one interface; nothing above them knows which protocol is underneath.
 - **Receives forwarded mail** on its own SMTP port for accounts where IMAP is switched off but forwarding is allowed. Read-only by nature, and it never trusts authentication headers handed to it over plain SMTP.
 - **Speaks the Gmail API and Microsoft Graph** natively: labels as folders with a virtual Archive, `history.list` sync with Gmail; per-folder delta queries with immutable ids on Graph. Both poll until push (Pub/Sub, change notifications) is configured. Both are proven against mock servers in the conformance suite; live use needs your own OAuth client.
-- **Mints stable message IDs** that survive folder moves, and rebuilds threads with the JWZ algorithm.
+- **Mints stable message IDs** that survive folder moves: from the Message-ID header, or from a fingerprint of sender, recipients, subject and date when the header is missing. A reused or forged Message-ID is told apart by the same fingerprint. Threads are rebuilt with the JWZ algorithm.
 - **Appends every change to a cursor-ordered log.** Consumers read it by polling, by Server-Sent Events, or by webhook, and replay from any cursor after being offline.
 - **Executes actions idempotently** (client keys), journals each one, and can undo moves, flag changes, deletes, drafts and timers.
 - **Proposes before it acts** when asked: a proposed action waits in a queue until approved or rejected.

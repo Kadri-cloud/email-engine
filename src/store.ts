@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS messages (
   trust TEXT NOT NULL DEFAULT 'unverified',
   size INTEGER NOT NULL DEFAULT 0,
   snippet TEXT NOT NULL DEFAULT '',
-  has_attachments INTEGER NOT NULL DEFAULT 0
+  has_attachments INTEGER NOT NULL DEFAULT 0,
+  fingerprint TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS messages_header ON messages(account, header_message_id);
 CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
@@ -126,19 +127,41 @@ export interface MessageRow {
   size: number;
   snippet: string;
   has_attachments: boolean;
+  fingerprint: string;
 }
 
 export const now = () => new Date().toISOString();
 export const newId = (prefix: string) => `${prefix}_${randomBytes(8).toString("hex")}`;
 export const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
-// Engine message id: survives folder moves. Minted from the Message-ID header
-// when present so one message seen in two folders collapses to one id.
-// ponytail: falls back to account+uidvalidity+uid when the header is missing;
-// a content hash of raw headers would be stricter, add when duplicates appear.
-export function mintMessageId(account: string, headerMessageId: string | null, fallback: string) {
-  const key = headerMessageId ? `${account}\n${headerMessageId.trim()}` : `${account}\n${fallback}`;
-  return "msg_" + sha256(key).slice(0, 24);
+/**
+ * A fingerprint of the headers that travel with a message and never change:
+ * sender, recipients, subject and date, normalised so every adapter produces
+ * the same value for the same message. It survives moves and copies, which
+ * a folder uid does not, and it tells two messages apart when someone reuses
+ * or forges a Message-ID.
+ */
+export function fingerprintOf(m: { from: Address | null; to: Address[]; subject: string; date: string }): string {
+  const when = Number.isFinite(Date.parse(m.date)) ? new Date(m.date).toISOString().slice(0, 19) : "";
+  const key = [
+    m.from?.address.toLowerCase() ?? "",
+    m.to.map((a) => a.address.toLowerCase()).sort().join(","),
+    m.subject.replace(/\s+/g, " ").trim().toLowerCase(),
+    when,
+  ].join("\n");
+  return sha256(key).slice(0, 32);
+}
+
+/**
+ * Engine message id: survives folder moves and is the same on every protocol.
+ * Minted from the Message-ID header when present, so one message seen in two
+ * folders collapses to one id; from the header fingerprint when it is missing.
+ * A Message-ID shared by two different messages is detected by the fingerprint
+ * and the second one gets an id minted from both.
+ */
+export function mintMessageId(account: string, headerMessageId: string | null, fingerprint: string) {
+  const key = headerMessageId ? headerMessageId.trim() : `fp:${fingerprint}`;
+  return "msg_" + sha256(`${account}\n${key}`).slice(0, 24);
 }
 
 export function openStore(path: string) {
@@ -146,6 +169,9 @@ export function openStore(path: string) {
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.exec(SCHEMA);
+  // Forward-only migrations for databases created before a column existed.
+  const columns = new Set((db.pragma("table_info(messages)") as { name: string }[]).map((c) => c.name));
+  if (!columns.has("fingerprint")) db.exec(`ALTER TABLE messages ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''`);
 
   const q = {
     insertEvent: db.prepare(
@@ -176,9 +202,10 @@ export function openStore(path: string) {
     messageById: db.prepare(`SELECT * FROM messages WHERE id = ?`),
     insertMessage: db.prepare(
       `INSERT OR IGNORE INTO messages
-       (id, account, thread_id, header_message_id, in_reply_to, refs, subject, from_json, to_json, cc_json, date, flags, trust, size, snippet, has_attachments)
-       VALUES (@id, @account, @thread_id, @header_message_id, @in_reply_to, @refs, @subject, @from_json, @to_json, @cc_json, @date, @flags, @trust, @size, @snippet, @has_attachments)`,
+       (id, account, thread_id, header_message_id, in_reply_to, refs, subject, from_json, to_json, cc_json, date, flags, trust, size, snippet, has_attachments, fingerprint)
+       VALUES (@id, @account, @thread_id, @header_message_id, @in_reply_to, @refs, @subject, @from_json, @to_json, @cc_json, @date, @flags, @trust, @size, @snippet, @has_attachments, @fingerprint)`,
     ),
+    setFingerprint: db.prepare(`UPDATE messages SET fingerprint = ? WHERE id = ? AND fingerprint = ''`),
     insertFts: db.prepare(
       `INSERT INTO messages_fts (id, subject, participants, snippet) VALUES (?, ?, ?, ?)`,
     ),
@@ -262,6 +289,7 @@ export function openStore(path: string) {
     size: r.size,
     snippet: r.snippet,
     has_attachments: !!r.has_attachments,
+    fingerprint: r.fingerprint ?? "",
   });
 
   return {
@@ -352,6 +380,7 @@ export function openStore(path: string) {
         size: m.size,
         snippet: m.snippet,
         has_attachments: m.has_attachments ? 1 : 0,
+        fingerprint: m.fingerprint,
       });
       if (r.changes === 0) return false;
       const people = [m.from, ...m.to, ...m.cc]
@@ -383,6 +412,10 @@ export function openStore(path: string) {
     setSnippet(id: string, snippet: string) {
       q.setSnippet.run(snippet, id);
       q.setFtsSnippet.run(snippet, id);
+    },
+    /** Backfill for rows created before fingerprints existed. Only writes when the stored value is empty. */
+    setFingerprint(id: string, fingerprint: string) {
+      q.setFingerprint.run(fingerprint, id);
     },
     senderSeen(account: string, address: string): boolean {
       return !!q.senderSeen.get(account, `%"address":${JSON.stringify(address)}%`);
