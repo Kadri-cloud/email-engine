@@ -5,6 +5,7 @@ import { simpleParser } from "mailparser";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import type { Adapter, RemoteFolder, RemoteMessage, SyncSink } from "./adapter.js";
 import { ImapAdapter } from "./imap.js";
+import { InboundAdapter } from "./inbound.js";
 import { JmapAdapter } from "./jmap.js";
 import { ActionParams, type AccountConfig, type ActionRequest, type Address, type Flags, type Trust, HIGH_RISK } from "./schema.js";
 import { mintMessageId, newId, now, type MessageRow, type Store } from "./store.js";
@@ -21,12 +22,14 @@ export class ScopeError extends Error {}
 
 type Folder = ReturnType<Store["upsertFolder"]>;
 
-export function makeAdapter(config: AccountConfig): Adapter {
+export function makeAdapter(config: AccountConfig, ctx: { dataDir: string }): Adapter {
   switch (config.provider) {
     case "imap":
       return new ImapAdapter(config);
     case "jmap":
       return new JmapAdapter(config);
+    case "inbound":
+      return new InboundAdapter(config, ctx.dataDir);
   }
 }
 
@@ -46,13 +49,15 @@ class AccountRunner implements SyncSink {
   private running = false;
   private wake: (() => void) | null = null;
   private dirty = new Set<string>();
+  /** Messages that vanished from their last known folder: maybe moved, maybe deleted. Decided after the other folders are checked. */
+  private lost = new Map<string, string[]>();
 
   constructor(
     public id: string,
     public config: AccountConfig,
     private engine: Engine,
   ) {
-    this.adapter = makeAdapter(config);
+    this.adapter = makeAdapter(config, { dataDir: engine.opts.dataDir });
   }
 
   get store() {
@@ -86,8 +91,9 @@ class AccountRunner implements SyncSink {
           return;
         }
         const delay = Math.min(300_000, 1000 * 2 ** Math.min(attempt, 8)) * (0.5 + Math.random());
+        const detail = [e?.command, e?.responseText, e?.serverResponseCode, e?.code].filter(Boolean).join(" | ");
         this.engine.status(this.id, "disconnected", null, String(e?.message ?? e));
-        log("account error, retrying", { account: this.id, attempt, delay: Math.round(delay), error: String(e?.message ?? e) });
+        log("account error, retrying", { account: this.id, attempt, delay: Math.round(delay), error: String(e?.message ?? e), detail, stack: String(e?.stack ?? "").split("\n").slice(1, 4).join(" <- ").trim() });
         await this.adapter.close().catch(() => {});
         await sleep(delay);
       }
@@ -134,7 +140,10 @@ class AccountRunner implements SyncSink {
       });
     }
 
-    // Poll loop: inbox on wake or every 2 min as a safety net, every folder every 10 min.
+    // Poll loop: inbox on wake or on a safety tick, every folder every 10 min. IMAP IDLE servers can
+    // miss or delay notifications (Dovecot only notices mail copied into cur/ at its periodic check),
+    // so the tick is 30 s there; push channels that are reliable get 2 min.
+    const tickMs = caps.push === "idle" ? 30_000 : 120_000;
     let lastFull = Date.now();
     while (this.running) {
       // A push that lands while we are mid-sync is kept in `dirty`; only wait when nothing is pending.
@@ -142,7 +151,7 @@ class AccountRunner implements SyncSink {
       if (this.dirty.size === 0) {
         reason = await Promise.race([
           new Promise<"wake">((r) => (this.wake = () => r("wake"))),
-          sleep(120_000).then(() => "tick" as const),
+          sleep(tickMs).then(() => "tick" as const),
           idleClosed?.then(() => "closed" as const) ?? new Promise<never>(() => {}),
         ]);
         this.wake = null;
@@ -172,9 +181,20 @@ class AccountRunner implements SyncSink {
         .filter((f): f is Folder => !!f)
         .map((f) => ({ path: f.path, name: f.name, role: f.role as RemoteFolder["role"] }));
       if (!folders.length) return;
-      const state = this.store.getSyncState(this.id);
-      const next = await this.adapter.sync(folders, state, this);
+      const next = await this.adapter.sync(folders, this.store.getSyncState(this.id), this);
       this.store.setSyncState(this.id, next);
+      if (this.lost.size) {
+        // Something vanished from a folder we synced. Look in the folders we did not, then decide: moved or deleted.
+        const rest = [...this.folders.values()]
+          .filter((f) => !paths.includes(f.path))
+          .map((f) => ({ path: f.path, name: f.name, role: f.role as RemoteFolder["role"] }));
+        if (rest.length) this.store.setSyncState(this.id, await this.adapter.sync(rest, this.store.getSyncState(this.id), this));
+        for (const [id, before] of this.lost) {
+          const m = this.store.messageById(id);
+          if (m) this.engine.emit("message.deleted", this.id, now(), { message_id: id, thread_id: m.thread_id, folder_ids: before });
+        }
+        this.lost.clear();
+      }
     };
     this.syncing = this.syncing.then(run, run);
     return this.syncing;
@@ -203,8 +223,11 @@ class AccountRunner implements SyncSink {
 
     if (existing) {
       const links = this.store.foldersOfMessage(id);
-      const before = links.map((l) => l.folder_id);
-      let after = [...before];
+      const known = links.map((l) => l.folder_id);
+      const lostBefore = this.lost.get(id);
+      if (lostBefore) this.lost.delete(id); // it moved here rather than being deleted
+      const before = lostBefore ?? known;
+      let after = [...known];
       for (const fid of folderIds) {
         const link = links.find((l) => l.folder_id === fid);
         if (!link) {
@@ -215,7 +238,7 @@ class AccountRunner implements SyncSink {
         }
       }
       if (complete) {
-        for (const fid of before) {
+        for (const fid of known) {
           if (!folderIds.includes(fid)) {
             this.store.unlinkFolder(id, fid);
             after = after.filter((x) => x !== fid);
@@ -225,7 +248,7 @@ class AccountRunner implements SyncSink {
       const flagsChanged = JSON.stringify(existing.flags) !== JSON.stringify(m.flags);
       if (flagsChanged) this.store.setFlags(id, m.flags);
       const foldersChanged = !sameSet(before, after);
-      if (before.length === 0 && !flagsChanged) return; // silent relink after a renumbering
+      if (known.length === 0 && !lostBefore && !flagsChanged) return; // silent relink after a renumbering
       if (!foldersChanged && !flagsChanged) return;
       this.engine.emit("message.updated", this.id, now(), {
         message_id: id,
@@ -299,12 +322,28 @@ class AccountRunner implements SyncSink {
   gone(folderPath: string, ref: string) {
     const f = this.folders.get(folderPath);
     const m = f && this.store.messageByFolderRef(f.id, ref);
-    if (f && m) this.removeFromFolders(m, [f.id]);
+    if (!f || !m) return;
+    const before = this.store.foldersOfMessage(m.id).map((l) => l.folder_id);
+    this.store.unlinkFolder(m.id, f.id);
+    const after = before.filter((x) => x !== f.id);
+    if (after.length) {
+      this.engine.emit("message.updated", this.id, now(), {
+        message_id: m.id,
+        thread_id: m.thread_id,
+        folder_ids: after,
+        changes: { folder_ids: { before, after } },
+      });
+      return;
+    }
+    // Nowhere else we know of. It may have been moved by another client; syncPaths decides once the other folders are checked.
+    this.lost.set(m.id, before);
   }
 
   destroyed(ref: string) {
     const m = this.store.messageByRef(this.id, ref);
-    if (m) this.removeFromFolders(m, this.store.foldersOfMessage(m.id).map((l) => l.folder_id));
+    if (!m) return;
+    this.lost.delete(m.id);
+    this.removeFromFolders(m, this.store.foldersOfMessage(m.id).map((l) => l.folder_id));
   }
 
   private removeFromFolders(m: MessageRow, folderIds: string[]) {
@@ -379,7 +418,7 @@ export class Engine {
 
   constructor(
     public store: Store,
-    private opts: { webhookUrl?: string | undefined; bodyCacheDir: string },
+    public opts: { webhookUrl?: string | undefined; dataDir: string },
   ) {}
 
   // ----- event log -----

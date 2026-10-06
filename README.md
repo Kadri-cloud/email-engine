@@ -8,6 +8,7 @@ A self-hosted engine that turns any mailbox into one ordered event stream, with 
 
 - **Syncs** any IMAP account with IDLE push, QRESYNC/CONDSTORE incremental sync (expunges arrive as VANISHED, no per-poll UID scans), reconnect with backoff, and folder-role detection.
 - **Syncs** any JMAP account (Fastmail, Stalwart) with state-based delta sync, EventSource push, native threads and server-side filing of sent mail. Both adapters implement one interface; nothing above them knows which protocol is underneath.
+- **Receives forwarded mail** on its own SMTP port for accounts where IMAP is switched off but forwarding is allowed. Read-only by nature, and it never trusts authentication headers handed to it over plain SMTP.
 - **Mints stable message IDs** that survive folder moves, and rebuilds threads with the JWZ algorithm.
 - **Appends every change to a cursor-ordered log.** Consumers read it by polling, by Server-Sent Events, or by webhook, and replay from any cursor after being offline.
 - **Executes actions idempotently** (client keys), journals each one, and can undo moves, flag changes, deletes, drafts and timers.
@@ -138,22 +139,47 @@ Tools: `search_mail`, `get_message`, `get_thread`, `list_accounts_and_folders`, 
 | `ENGINE_WEBHOOK` | unset | POST every event to this URL |
 | `ENGINE_DEBUG` | unset | Log idle wake-ups and poll decisions |
 
+### Inbound SMTP (forwarded mail)
+
+```bash
+curl -X POST http://127.0.0.1:8080/accounts \
+  -H "authorization: Bearer test" -H "content-type: application/json" \
+  -d '{"provider":"inbound","address":"inbox@engine.test","inbound":{"host":"0.0.0.0","port":2525}}'
+```
+
+Point a forwarding rule at that address and port. Set `inbound.user` and `inbound.pass` to require SMTP AUTH. Messages are stored under the data directory, flags and permanent delete work, moves and drafts refuse, and every message is `unverified` because headers on forwarded mail cannot be trusted.
+
+## Conformance suite
+
+The same behavioural scenarios run against every adapter on a fresh engine per target, with mail changed behind the engine's back over a side channel. Each run writes [conformance/REPORT.md](conformance/REPORT.md) and `conformance/report.json`: a scenario-by-target matrix, each server's capability descriptor and advertised extensions, measured latencies, and the quirks a developer targeting that server should know.
+
+```bash
+docker compose up -d && node test/stalwart-setup.mjs bob pass
+node test/conformance.mjs                 # all targets in test/targets.json
+node test/conformance.mjs dovecot-imap    # one target
+```
+
+Scenarios include exact event counts for arrival, external flag changes, moves and expunges, a 25-message flag storm, an offline catch-up (stop the engine, change the mailbox, restart, expect each change exactly once), and the token, redaction and proposal rules. Add a server by adding a target: an account config and a side channel.
+
 ## Development
 
 ```bash
 npm test                      # unit tests (threading)
-node test/smoke.mjs           # needs the engine and Dovecot running
+node test/smoke.mjs           # the scenarios against a running engine, one account
+node test/idle-probe.mjs      # how a server delivers IDLE notifications under a burst
 ```
 
 Layout: `src/schema.ts` (the specification as zod schemas), `src/store.ts` (SQLite), `src/adapter.ts` (the adapter interface), `src/imap.ts` (the only file that speaks IMAP/SMTP), `src/jmap.ts` (the only file that speaks JMAP), `src/sync.ts` (runners, event log, actions, journal, timers), `src/scope.ts` (tokens and redaction), `src/api.ts` (HTTP and SSE), `src/mcp.ts` (MCP server), `src/threading.ts` (JWZ).
 
 A third lesson from the JMAP work: a server behind Docker or a proxy advertises session URLs on a hostname only it can resolve, so the adapter rebases them onto the origin it actually reached, and it does so with plain string handling because a URL parser percent-encodes the `{accountId}` and `{blobId}` placeholders.
 
+Two more from the conformance suite. An IMAP connection that keeps a mailbox selected between commands can be served a stale view: Dovecot answered a UID FETCH from the session's snapshot and returned 9 of 12 fresh messages. The work connection now re-selects for every call and deselects with a read-only EXAMINE plus CLOSE, inside the lock, because CLOSE on a read-write selection would expunge mail another client flagged as deleted. And a message that vanishes from a folder is not a deletion until the other folders have been checked; another client may have moved it.
+
 Two lessons the smoke test taught, kept here so nobody relearns them: a push that arrives while a sync is running must be queued, not dropped (the poll loop checks its dirty set before waiting); and a long-lived IMAP connection's cached UIDNEXT only refreshes on SELECT, so new mail is always fetched with an open-ended `lastUid:*` range and the next UID is derived from what the server returns.
 
 ## Not yet
 
-Gmail API and Microsoft Graph adapters. Inbound SMTP adapter. Webhook signatures and retry queue. Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
+Gmail API and Microsoft Graph adapters. Webhook signatures and retry queue. Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
 
 ## Licence
 

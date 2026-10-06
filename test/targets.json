@@ -1,0 +1,26 @@
+[
+  {
+    "name": "dovecot-imap",
+    "server": "Dovecot 2.4 (docker dovecot/dovecot:latest)",
+    "account": { "provider": "imap", "address": "alice@example.com", "imap": { "host": "127.0.0.1", "port": 993, "secure": true, "user": "alice", "pass": "pass", "insecure_tls": true } },
+    "side": { "kind": "imap", "host": "127.0.0.1", "port": 993, "user": "alice", "pass": "pass" }
+  },
+  {
+    "name": "stalwart-imap",
+    "server": "Stalwart 0.13.3 over IMAP (docker stalwartlabs/stalwart:v0.13.3)",
+    "account": { "provider": "imap", "address": "carol@example.com", "imap": { "host": "127.0.0.1", "port": 1993, "secure": true, "user": "carol", "pass": "pass", "insecure_tls": true } },
+    "side": { "kind": "imap", "host": "127.0.0.1", "port": 1993, "user": "carol", "pass": "pass" }
+  },
+  {
+    "name": "stalwart-jmap",
+    "server": "Stalwart 0.13.3 over JMAP (docker stalwartlabs/stalwart:v0.13.3)",
+    "account": { "provider": "jmap", "address": "bob@example.com", "jmap": { "url": "http://127.0.0.1:8081/.well-known/jmap", "user": "bob", "pass": "pass" } },
+    "side": { "kind": "imap", "host": "127.0.0.1", "port": 1993, "user": "bob", "pass": "pass" }
+  },
+  {
+    "name": "inbound-smtp",
+    "server": "The engine's own inbound SMTP listener (forwarded mail)",
+    "account": { "provider": "inbound", "address": "inbox@engine.test", "inbound": { "host": "127.0.0.1", "port": 2525 } },
+    "side": { "kind": "smtp", "host": "127.0.0.1", "port": 2525 }
+  }
+]

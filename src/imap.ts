@@ -209,10 +209,16 @@ export class ImapAdapter implements Adapter {
     return out;
   }
 
-  /** Run `fn` with the folder selected and locked. Helpers inside take the client; they never re-lock. */
-  private async withFolder<T>(path: string, fn: (c: ImapFlow, snap: Snapshot) => Promise<T>): Promise<T> {
+  /**
+   * Run `fn` with the folder selected and locked, then deselect it. Helpers inside take the client; they never re-lock.
+   * The work connection never keeps a mailbox selected between calls: a long-lived selection can be served a
+   * stale view (Dovecot answers UID FETCH from the session's snapshot until it chooses to sync), so every call
+   * re-selects and sees the server's truth. Deselection is always via a read-only EXAMINE + CLOSE, because CLOSE
+   * on a read-write selection would expunge messages another client flagged \Deleted.
+   */
+  private async withFolder<T>(path: string, fn: (c: ImapFlow, snap: Snapshot) => Promise<T>, readOnly = true): Promise<T> {
     const c = await this.client();
-    const lock = await c.getMailboxLock(path);
+    const lock = await c.getMailboxLock(path, { readOnly });
     try {
       const mb = c.mailbox;
       if (!mb) throw new Error(`mailbox ${path} did not open`);
@@ -223,6 +229,14 @@ export class ImapAdapter implements Adapter {
         exists: mb.exists,
       });
     } finally {
+      // Deselect while still holding the lock, so no other caller can select and start fetching
+      // between our release and our CLOSE. The lock is a client-side queue; open/close do not take it.
+      try {
+        if (!readOnly) await c.mailboxOpen(path, { readOnly: true });
+        await c.mailboxClose();
+      } catch {
+        /* deselect is best effort; the next open re-selects anyway */
+      }
       lock.release();
     }
   }
@@ -336,26 +350,38 @@ export class ImapAdapter implements Adapter {
   // ---------- actions ----------
 
   async setFlags(path: string, ref: string, set: Partial<Flags>) {
-    await this.withFolder(path, async (c) => {
-      const add = flagList(set, true);
-      const remove = flagList(set, false);
-      if (add.length) await c.messageFlagsAdd(ref, add, { uid: true });
-      if (remove.length) await c.messageFlagsRemove(ref, remove, { uid: true });
-    });
+    await this.withFolder(
+      path,
+      async (c) => {
+        const add = flagList(set, true);
+        const remove = flagList(set, false);
+        if (add.length) await c.messageFlagsAdd(ref, add, { uid: true });
+        if (remove.length) await c.messageFlagsRemove(ref, remove, { uid: true });
+      },
+      false,
+    );
   }
 
   async move(fromPath: string, ref: string, toPath: string): Promise<string | null> {
-    return this.withFolder(fromPath, async (c) => {
-      const r = await c.messageMove(ref, toPath, { uid: true });
-      const uid = r ? r.uidMap?.get(Number(ref)) : undefined;
-      return uid ? String(uid) : null;
-    });
+    return this.withFolder(
+      fromPath,
+      async (c) => {
+        const r = await c.messageMove(ref, toPath, { uid: true });
+        const uid = r ? r.uidMap?.get(Number(ref)) : undefined;
+        return uid ? String(uid) : null;
+      },
+      false,
+    );
   }
 
   async expunge(path: string, ref: string) {
-    await this.withFolder(path, async (c) => {
-      await c.messageDelete(ref, { uid: true });
-    });
+    await this.withFolder(
+      path,
+      async (c) => {
+        await c.messageDelete(ref, { uid: true });
+      },
+      false,
+    );
   }
 
   async append(path: string, raw: Buffer, flags: Partial<Flags>): Promise<string | null> {

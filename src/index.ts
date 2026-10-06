@@ -14,7 +14,7 @@ const token = process.env.ENGINE_TOKEN ?? randomBytes(16).toString("hex");
 if (!process.env.ENGINE_TOKEN) console.log(JSON.stringify({ msg: "generated admin token", token }));
 
 const store = openStore(`${DATA}/engine.db`);
-const engine = new Engine(store, { webhookUrl: WEBHOOK, bodyCacheDir: `${DATA}/bodies` });
+const engine = new Engine(store, { webhookUrl: WEBHOOK, dataDir: DATA });
 const app = createApi(engine, token);
 
 serve({ fetch: app.fetch, port: PORT }, () =>

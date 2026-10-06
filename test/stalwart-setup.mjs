@@ -21,9 +21,12 @@ const api = async (method, path, body) => {
 };
 
 console.log("domain:", JSON.stringify(await api("POST", "/api/principal", { type: "domain", name: "example.com" })));
-console.log("account:", JSON.stringify(await api("POST", "/api/principal", {
-  type: "individual", name: user, description: `${user} test`, secrets: [pass], emails: [`${user}@example.com`], roles: ["user"],
-})));
+// The named user plus `carol`, so the conformance suite can test Stalwart over IMAP and JMAP on separate mailboxes.
+for (const u of [...new Set([user, "carol"])]) {
+  console.log(`account ${u}:`, JSON.stringify(await api("POST", "/api/principal", {
+    type: "individual", name: u, description: `${u} test`, secrets: [pass], emails: [`${u}@example.com`], roles: ["user"],
+  })));
+}
 
 // Probe the JMAP session as the new user.
 const userAuth = "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");

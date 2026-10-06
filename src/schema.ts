@@ -48,7 +48,7 @@ export type AccountStatus = z.infer<typeof AccountStatus>;
 
 export const Capabilities = z.object({
   folders: z.enum(["folders", "labels"]),
-  push: z.enum(["idle", "jmap", "pubsub", "graph", "none"]),
+  push: z.enum(["idle", "jmap", "pubsub", "graph", "smtp", "none"]),
   incremental_sync: z.enum([
     "qresync",
     "condstore",
@@ -270,5 +270,18 @@ export const JmapAccountConfig = z.object({
 });
 export type JmapAccountConfig = z.infer<typeof JmapAccountConfig>;
 
-export const AccountConfig = z.discriminatedUnion("provider", [ImapAccountConfig, JmapAccountConfig]);
+export const InboundAccountConfig = z.object({
+  provider: z.literal("inbound"),
+  address: z.string().email(), // the address forwarders send to
+  inbound: z.object({
+    host: z.string().default("0.0.0.0"),
+    port: z.number().int(),
+    user: z.string().optional(), // when both are set, SMTP AUTH is required
+    pass: z.string().optional(),
+    accept_any_recipient: z.boolean().default(false),
+  }),
+});
+export type InboundAccountConfig = z.infer<typeof InboundAccountConfig>;
+
+export const AccountConfig = z.discriminatedUnion("provider", [ImapAccountConfig, JmapAccountConfig, InboundAccountConfig]);
 export type AccountConfig = z.infer<typeof AccountConfig>;
