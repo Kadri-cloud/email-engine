@@ -45,6 +45,24 @@ export function rfc822({ from = `"Sender" <sender@example.com>`, to, subject, me
 
 /** A side channel that changes the mailbox behind the engine's back: IMAP (append, flag, move, expunge) or SMTP (send only). */
 export function makeSideChannel(side) {
+  if (side.kind === "mock") {
+    // A mock provider's admin endpoints: the same verbs the IMAP side channel offers.
+    const post = async (path, body) => {
+      const r = await fetch(side.url + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(`${path} -> ${r.status} ${await r.text()}`);
+    };
+    return {
+      kind: "mock",
+      inject: (raw) => post("/_mock/inject", { raw }),
+      flag: (messageId, flags, add = true) => post("/_mock/flag", { messageId, flags, add }),
+      flagAll: (flags) => post("/_mock/flagAll", { flags }),
+      move: (messageId, destination) => post("/_mock/move", { messageId, to: destination }),
+      moveBack: (messageId) => post("/_mock/move", { messageId, to: "INBOX" }),
+      expunge: (messageId) => post("/_mock/expunge", { messageId }),
+      purge: () => post("/_mock/purge", {}),
+      capabilities: async () => [],
+    };
+  }
   if (side.kind === "smtp") {
     const t = nodemailer.createTransport({ host: side.host, port: side.port, secure: false, ignoreTLS: true, auth: side.user ? { user: side.user, pass: side.pass } : undefined });
     return {
@@ -149,7 +167,7 @@ export async function buildContext({ api, apiAs, account, side }) {
   const caps = status?.payload.capabilities ?? null;
   const features = new Set();
   if (side) features.add("inject");
-  if (side?.kind === "imap") features.add("side-imap");
+  if (side?.flag) features.add("side-write"); // the side channel can flag, move and expunge behind the engine's back
   if (caps?.folders !== undefined && account.provider !== "inbound") features.add("move");
   if (archive) features.add("archive");
   if (byRole("drafts") && account.provider !== "inbound") features.add("drafts");
@@ -238,7 +256,7 @@ export const scenarios = [
   },
   {
     name: "flag change from another client arrives as message.updated",
-    needs: ["side-imap"],
+    needs: ["side-write"],
     async run(ctx) {
       await ctx.refreshCursor();
       await ctx.side.flag(ctx.msg.messageId, ["\\Flagged"]);
@@ -266,7 +284,7 @@ export const scenarios = [
   },
   {
     name: "move from another client: one message.updated, no received, no deleted",
-    needs: ["side-imap", "archive"],
+    needs: ["side-write", "archive"],
     async run(ctx) {
       await ctx.refreshCursor();
       // The side channel is IMAP, so it needs the folder's name; for a JMAP account `path` is the mailbox id.
@@ -286,7 +304,7 @@ export const scenarios = [
   },
   {
     name: "expunge from another client: exactly one message.deleted",
-    needs: ["side-imap"],
+    needs: ["side-write"],
     async run(ctx) {
       const stamp = Date.now();
       await ctx.refreshCursor();
@@ -388,7 +406,7 @@ export const scenarios = [
   },
   {
     name: "flag storm: 25 flag changes from another client arrive as exactly 25 updates",
-    needs: ["side-imap"],
+    needs: ["side-write"],
     async run(ctx) {
       const stamp = Date.now();
       await ctx.refreshCursor();

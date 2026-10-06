@@ -283,5 +283,34 @@ export const InboundAccountConfig = z.object({
 });
 export type InboundAccountConfig = z.infer<typeof InboundAccountConfig>;
 
-export const AccountConfig = z.discriminatedUnion("provider", [ImapAccountConfig, JmapAccountConfig, InboundAccountConfig]);
+export const GmailAccountConfig = z.object({
+  provider: z.literal("gmail"),
+  address: z.string().email(),
+  gmail: z.object({
+    client_id: z.string(),
+    client_secret: z.string().optional(),
+    refresh_token: z.string(), // obtained once with `node test/oauth.mjs google`
+    poll_seconds: z.number().int().min(2).default(30), // history.list polling until Pub/Sub push is configured
+    base_url: z.string().url().optional(), // tests point this at a mock
+    token_url: z.string().url().optional(),
+  }),
+});
+export type GmailAccountConfig = z.infer<typeof GmailAccountConfig>;
+
+export const GraphAccountConfig = z.object({
+  provider: z.literal("graph"),
+  address: z.string().email(),
+  graph: z.object({
+    tenant: z.string().default("common"), // "common", "consumers", or a tenant id
+    client_id: z.string(),
+    client_secret: z.string().optional(), // absent for a public client
+    refresh_token: z.string(), // obtained once with `node test/oauth.mjs microsoft`
+    poll_seconds: z.number().int().min(2).default(30), // delta polling until change notifications are configured
+    base_url: z.string().url().optional(), // tests point this at a mock
+    token_url: z.string().url().optional(),
+  }),
+});
+export type GraphAccountConfig = z.infer<typeof GraphAccountConfig>;
+
+export const AccountConfig = z.discriminatedUnion("provider", [ImapAccountConfig, JmapAccountConfig, InboundAccountConfig, GmailAccountConfig, GraphAccountConfig]);
 export type AccountConfig = z.infer<typeof AccountConfig>;

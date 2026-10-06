@@ -65,6 +65,20 @@ for (const [i, target] of targets.entries()) {
   console.log(`\n=== ${target.name}: ${target.server} ===`);
   const side = makeSideChannel(target.side);
   const result = { name: target.name, server: target.server, provider: target.account.provider, scenarios: [], quirks: [], measurements: {} };
+  let mock = null;
+  if (target.mock) {
+    mock = spawn(process.execPath, [target.mock.script, String(target.mock.port)], { stdio: ["ignore", "pipe", "pipe"] });
+    mock.stderr.on("data", (d) => appendFileSync(`${dataDir}/mock.log`, d));
+    mock.stdout.on("data", (d) => appendFileSync(`${dataDir}/mock.log`, d));
+    for (let i = 0; i < 40; i++) {
+      try {
+        await fetch(`${target.side.url}/_mock/capabilities`, { method: "POST", body: "{}" });
+        break;
+      } catch {
+        await sleep(250);
+      }
+    }
+  }
   let engine = await startEngine(port, dataDir);
   const { api, apiAs } = makeApi(`http://127.0.0.1:${port}`, TOKEN);
   try {
@@ -100,7 +114,7 @@ for (const [i, target] of targets.entries()) {
     Object.assign(result.measurements, ctx.measurements);
 
     // Offline catch-up: stop the engine, change the mailbox, restart, expect exactly the right events once.
-    if (side.kind === "imap" && ctx.msg) {
+    if (side.flag && ctx.msg) {
       const t = Date.now();
       try {
         const before = (await api("/health")).cursor;
@@ -108,7 +122,7 @@ for (const [i, target] of targets.entries()) {
         const stamp = Date.now();
         const newId = `<offline-${stamp}@example.com>`;
         await side.inject(rfc822({ to: account.address, subject: `Offline ${stamp}`, messageId: newId, body: "arrived while the engine was down" }));
-        await side.flag(ctx.msg.messageId, ["\\Answered"]);
+        await side.flag(ctx.msg.messageId, ["\\Flagged"]); // every provider has a flagged/starred flag; not all have answered
         const victimStamp = Date.now();
         await side.inject(rfc822({ to: account.address, subject: `Victim ${victimStamp}`, messageId: `<victim-${victimStamp}@example.com>`, body: "will be expunged while down" }));
         // The victim never existed for the engine, so expunging it must produce nothing at all.
@@ -116,7 +130,7 @@ for (const [i, target] of targets.entries()) {
         engine = await startEngine(port, dataDir);
         await waitConnected(api, id);
         await waitFor(api, before, (e) => e.type === "message.received" && e.payload.subject === `Offline ${stamp}`, "offline arrival", 30000);
-        await waitFor(api, before, (e) => e.type === "message.updated" && e.payload.message_id === ctx.msg.message_id && e.payload.changes.flags?.after.answered === true, "offline flag", 30000);
+        await waitFor(api, before, (e) => e.type === "message.updated" && e.payload.message_id === ctx.msg.message_id && e.payload.changes.flags?.after.flagged === true, "offline flag", 30000);
         await sleep(2000);
         const { events } = await api(`/events?after=${before}&limit=2000`);
         const received = events.filter((e) => e.type === "message.received");
@@ -147,6 +161,7 @@ for (const [i, target] of targets.entries()) {
     console.log("TARGET ERROR", e.message);
   } finally {
     await engine.stop().catch(() => {});
+    if (mock) mock.kill();
     const logs = engine.logs();
     const errors = logs.split("\n").filter((l) => /error|crash/i.test(l));
     if (errors.length) result.engine_errors = errors.slice(0, 10);

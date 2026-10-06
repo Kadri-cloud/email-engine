@@ -9,6 +9,7 @@ A self-hosted engine that turns any mailbox into one ordered event stream, with 
 - **Syncs** any IMAP account with IDLE push, QRESYNC/CONDSTORE incremental sync (expunges arrive as VANISHED, no per-poll UID scans), reconnect with backoff, and folder-role detection.
 - **Syncs** any JMAP account (Fastmail, Stalwart) with state-based delta sync, EventSource push, native threads and server-side filing of sent mail. Both adapters implement one interface; nothing above them knows which protocol is underneath.
 - **Receives forwarded mail** on its own SMTP port for accounts where IMAP is switched off but forwarding is allowed. Read-only by nature, and it never trusts authentication headers handed to it over plain SMTP.
+- **Speaks the Gmail API and Microsoft Graph** natively: labels as folders with a virtual Archive, `history.list` sync with Gmail; per-folder delta queries with immutable ids on Graph. Both poll until push (Pub/Sub, change notifications) is configured. Both are proven against mock servers in the conformance suite; live use needs your own OAuth client.
 - **Mints stable message IDs** that survive folder moves, and rebuilds threads with the JWZ algorithm.
 - **Appends every change to a cursor-ordered log.** Consumers read it by polling, by Server-Sent Events, or by webhook, and replay from any cursor after being offline.
 - **Executes actions idempotently** (client keys), journals each one, and can undo moves, flag changes, deletes, drafts and timers.
@@ -149,6 +150,22 @@ curl -X POST http://127.0.0.1:8080/accounts \
 
 Point a forwarding rule at that address and port. Set `inbound.user` and `inbound.pass` to require SMTP AUTH. Messages are stored under the data directory, flags and permanent delete work, moves and drafts refuse, and every message is `unverified` because headers on forwarded mail cannot be trusted.
 
+### Gmail API and Microsoft Graph
+
+Both need an OAuth client you create once. The helper runs the sign-in on your machine and prints the refresh token and the account config to post.
+
+```bash
+# Google Cloud: enable the Gmail API, create an OAuth client of type "Desktop app",
+# add your address as a test user while the consent screen is in Testing mode.
+node test/oauth.mjs google CLIENT_ID CLIENT_SECRET
+
+# Entra: register an app, platform "Mobile and desktop applications", redirect http://localhost,
+# allow public client flows, API permissions Mail.ReadWrite, Mail.Send, offline_access.
+node test/oauth.mjs microsoft CLIENT_ID [TENANT]
+```
+
+What to expect: Gmail's labels appear as folders plus a virtual `ARCHIVE` meaning "in no system folder"; `has_attachments` is only known after a body fetch, because the metadata format carries no MIME structure. Graph lists top-level folders; a delete outside Deleted Items moves there first, so the adapter does that and then deletes. Both poll every `poll_seconds` (default 30). A public Gmail app needs Google's restricted-scope verification; a private one in Testing mode does not.
+
 ## Conformance suite
 
 The same behavioural scenarios run against every adapter on a fresh engine per target, with mail changed behind the engine's back over a side channel. Each run writes [conformance/REPORT.md](conformance/REPORT.md) and `conformance/report.json`: a scenario-by-target matrix, each server's capability descriptor and advertised extensions, measured latencies, and the quirks a developer targeting that server should know.
@@ -161,6 +178,8 @@ node test/conformance.mjs dovecot-imap    # one target
 
 Scenarios include exact event counts for arrival, external flag changes, moves and expunges, a 25-message flag storm, an offline catch-up (stop the engine, change the mailbox, restart, expect each change exactly once), and the token, redaction and proposal rules. Add a server by adding a target: an account config and a side channel.
 
+Six targets today: Dovecot and Stalwart over IMAP, Stalwart over JMAP, the inbound SMTP listener, and mock Gmail and Graph servers (`test/mock-gmail.mjs`, `test/mock-graph.mjs`) that implement the documented endpoints the adapters use, including history ids, delta tokens with removed entries, immutable ids and Graph's delete-to-Deleted-Items rule. Mocks prove the adapters' sync logic; they do not reproduce every provider quirk, which is what a live target with your credentials is for.
+
 ## Development
 
 ```bash
@@ -169,7 +188,7 @@ node test/smoke.mjs           # the scenarios against a running engine, one acco
 node test/idle-probe.mjs      # how a server delivers IDLE notifications under a burst
 ```
 
-Layout: `src/schema.ts` (the specification as zod schemas), `src/store.ts` (SQLite), `src/adapter.ts` (the adapter interface), `src/imap.ts` (the only file that speaks IMAP/SMTP), `src/jmap.ts` (the only file that speaks JMAP), `src/sync.ts` (runners, event log, actions, journal, timers), `src/scope.ts` (tokens and redaction), `src/api.ts` (HTTP and SSE), `src/mcp.ts` (MCP server), `src/threading.ts` (JWZ).
+Layout: `src/schema.ts` (the specification as zod schemas), `src/store.ts` (SQLite), `src/adapter.ts` (the adapter interface), `src/imap.ts` (the only file that speaks IMAP/SMTP), `src/jmap.ts` (JMAP), `src/gmail.ts` (Gmail API), `src/graph.ts` (Microsoft Graph), `src/inbound.ts` (inbound SMTP), `src/oauth.ts` (refresh-token client), `src/sync.ts` (runners, event log, actions, journal, timers), `src/scope.ts` (tokens and redaction), `src/api.ts` (HTTP and SSE), `src/mcp.ts` (MCP server), `src/threading.ts` (JWZ).
 
 A third lesson from the JMAP work: a server behind Docker or a proxy advertises session URLs on a hostname only it can resolve, so the adapter rebases them onto the origin it actually reached, and it does so with plain string handling because a URL parser percent-encodes the `{accountId}` and `{blobId}` placeholders.
 
@@ -179,7 +198,7 @@ Two lessons the smoke test taught, kept here so nobody relearns them: a push tha
 
 ## Not yet
 
-Gmail API and Microsoft Graph adapters. Webhook signatures and retry queue. Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
+Gmail Pub/Sub push and Graph change notifications (both poll today). Graph child folders. Live conformance targets for Gmail and Outlook (needs credentials). Webhook signatures and retry queue. Body cache on disk. Conformance suite and public quirks matrix. See the design specification for the roadmap.
 
 ## Licence
 

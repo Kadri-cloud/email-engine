@@ -2,25 +2,131 @@
   {
     "name": "dovecot-imap",
     "server": "Dovecot 2.4 (docker dovecot/dovecot:latest)",
-    "account": { "provider": "imap", "address": "alice@example.com", "imap": { "host": "127.0.0.1", "port": 993, "secure": true, "user": "alice", "pass": "pass", "insecure_tls": true } },
-    "side": { "kind": "imap", "host": "127.0.0.1", "port": 993, "user": "alice", "pass": "pass" }
+    "account": {
+      "provider": "imap",
+      "address": "alice@example.com",
+      "imap": {
+        "host": "127.0.0.1",
+        "port": 993,
+        "secure": true,
+        "user": "alice",
+        "pass": "pass",
+        "insecure_tls": true
+      }
+    },
+    "side": {
+      "kind": "imap",
+      "host": "127.0.0.1",
+      "port": 993,
+      "user": "alice",
+      "pass": "pass"
+    }
   },
   {
     "name": "stalwart-imap",
     "server": "Stalwart 0.13.3 over IMAP (docker stalwartlabs/stalwart:v0.13.3)",
-    "account": { "provider": "imap", "address": "carol@example.com", "imap": { "host": "127.0.0.1", "port": 1993, "secure": true, "user": "carol", "pass": "pass", "insecure_tls": true } },
-    "side": { "kind": "imap", "host": "127.0.0.1", "port": 1993, "user": "carol", "pass": "pass" }
+    "account": {
+      "provider": "imap",
+      "address": "carol@example.com",
+      "imap": {
+        "host": "127.0.0.1",
+        "port": 1993,
+        "secure": true,
+        "user": "carol",
+        "pass": "pass",
+        "insecure_tls": true
+      }
+    },
+    "side": {
+      "kind": "imap",
+      "host": "127.0.0.1",
+      "port": 1993,
+      "user": "carol",
+      "pass": "pass"
+    }
   },
   {
     "name": "stalwart-jmap",
     "server": "Stalwart 0.13.3 over JMAP (docker stalwartlabs/stalwart:v0.13.3)",
-    "account": { "provider": "jmap", "address": "bob@example.com", "jmap": { "url": "http://127.0.0.1:8081/.well-known/jmap", "user": "bob", "pass": "pass" } },
-    "side": { "kind": "imap", "host": "127.0.0.1", "port": 1993, "user": "bob", "pass": "pass" }
+    "account": {
+      "provider": "jmap",
+      "address": "bob@example.com",
+      "jmap": {
+        "url": "http://127.0.0.1:8081/.well-known/jmap",
+        "user": "bob",
+        "pass": "pass"
+      }
+    },
+    "side": {
+      "kind": "imap",
+      "host": "127.0.0.1",
+      "port": 1993,
+      "user": "bob",
+      "pass": "pass"
+    }
+  },
+  {
+    "name": "gmail-mock",
+    "server": "Mock Gmail API (test/mock-gmail.mjs): labels, history.list, drafts, send. Documented shapes, not Google's quirks",
+    "mock": {
+      "script": "test/mock-gmail.mjs",
+      "port": 18500
+    },
+    "account": {
+      "provider": "gmail",
+      "address": "mock@gmail.test",
+      "gmail": {
+        "client_id": "mock",
+        "refresh_token": "mock",
+        "base_url": "http://127.0.0.1:18500",
+        "token_url": "http://127.0.0.1:18500/token",
+        "poll_seconds": 2
+      }
+    },
+    "side": {
+      "kind": "mock",
+      "url": "http://127.0.0.1:18500"
+    }
+  },
+  {
+    "name": "graph-mock",
+    "server": "Mock Microsoft Graph (test/mock-graph.mjs): well-known folders, per-folder delta, move, MIME create, sendMail. Documented shapes, not Microsoft's quirks",
+    "mock": {
+      "script": "test/mock-graph.mjs",
+      "port": 18510
+    },
+    "account": {
+      "provider": "graph",
+      "address": "mock@outlook.test",
+      "graph": {
+        "tenant": "common",
+        "client_id": "mock",
+        "refresh_token": "mock",
+        "base_url": "http://127.0.0.1:18510",
+        "token_url": "http://127.0.0.1:18510/common/oauth2/v2.0/token",
+        "poll_seconds": 2
+      }
+    },
+    "side": {
+      "kind": "mock",
+      "url": "http://127.0.0.1:18510"
+    }
   },
   {
     "name": "inbound-smtp",
     "server": "The engine's own inbound SMTP listener (forwarded mail)",
-    "account": { "provider": "inbound", "address": "inbox@engine.test", "inbound": { "host": "127.0.0.1", "port": 2525 } },
-    "side": { "kind": "smtp", "host": "127.0.0.1", "port": 2525 }
+    "account": {
+      "provider": "inbound",
+      "address": "inbox@engine.test",
+      "inbound": {
+        "host": "127.0.0.1",
+        "port": 2525
+      }
+    },
+    "side": {
+      "kind": "smtp",
+      "host": "127.0.0.1",
+      "port": 2525
+    }
   }
 ]

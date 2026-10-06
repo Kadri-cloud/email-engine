@@ -4,6 +4,8 @@
 import { simpleParser } from "mailparser";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import type { Adapter, RemoteFolder, RemoteMessage, SyncSink } from "./adapter.js";
+import { GmailAdapter } from "./gmail.js";
+import { GraphAdapter } from "./graph.js";
 import { ImapAdapter } from "./imap.js";
 import { InboundAdapter } from "./inbound.js";
 import { JmapAdapter } from "./jmap.js";
@@ -30,6 +32,10 @@ export function makeAdapter(config: AccountConfig, ctx: { dataDir: string }): Ad
       return new JmapAdapter(config);
     case "inbound":
       return new InboundAdapter(config, ctx.dataDir);
+    case "gmail":
+      return new GmailAdapter(config);
+    case "graph":
+      return new GraphAdapter(config);
   }
 }
 
