@@ -206,6 +206,17 @@ export class GmailAdapter implements Adapter {
     return ref;
   }
 
+  async setFolders(ref: string, folderPaths: string[], currentPaths: string[]) {
+    // ARCHIVE is virtual: "in no system folder". It is never a label to add or remove, and it
+    // cannot be combined with a system folder, because that would mean "in INBOX and not in INBOX".
+    if (folderPaths.includes(ARCHIVE) && folderPaths.some((p) => FOLDER_LABELS.has(p))) {
+      throw new Error("on Gmail, ARCHIVE means 'in no system folder' and cannot be combined with INBOX, SENT, DRAFT, TRASH or SPAM");
+    }
+    const add = folderPaths.filter((p) => p !== ARCHIVE && !currentPaths.includes(p));
+    const remove = currentPaths.filter((p) => p !== ARCHIVE && !folderPaths.includes(p));
+    if (add.length || remove.length) await this.modify(ref, add, remove);
+  }
+
   async expunge(_path: string, ref: string) {
     await this.api(`/messages/${ref}`, { method: "DELETE" });
   }

@@ -79,6 +79,13 @@ export interface Adapter {
   setFlags(folderPath: string, ref: string, set: Partial<Flags>): Promise<void>;
   /** Returns the ref in the destination when known; the next sync discovers it otherwise. */
   move(fromPath: string, ref: string, toPath: string): Promise<string | null>;
+  /**
+   * Label providers: put the message in exactly these folders in one call.
+   * Folder providers leave this undefined and the engine composes copy, move and expunge instead.
+   */
+  setFolders?(ref: string, folderPaths: string[], currentPaths: string[]): Promise<void>;
+  /** Folder providers that can hold a message in two folders as two copies. Returns the copy's ref when known. */
+  copy?(fromPath: string, ref: string, toPath: string): Promise<string | null>;
   expunge(folderPath: string, ref: string): Promise<void>;
   append(folderPath: string, raw: Buffer, flags: Partial<Flags>): Promise<string | null>;
   source(folderPath: string, ref: string): Promise<Buffer | null>;

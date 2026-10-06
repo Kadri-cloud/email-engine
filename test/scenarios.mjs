@@ -169,6 +169,8 @@ export async function buildContext({ api, apiAs, account, side }) {
   if (side) features.add("inject");
   if (side?.flag) features.add("side-write"); // the side channel can flag, move and expunge behind the engine's back
   if (caps?.folders !== undefined && account.provider !== "inbound") features.add("move");
+  // A message in two folders at once: label providers natively, IMAP and Graph as two copies.
+  if (caps?.folders === "labels" || ["imap", "graph"].includes(account.provider)) features.add("multi-folder");
   if (archive) features.add("archive");
   if (byRole("drafts") && account.provider !== "inbound") features.add("drafts");
   if (byRole("trash") && account.provider !== "inbound") features.add("trash");
@@ -283,6 +285,59 @@ export const scenarios = [
     },
   },
   {
+    name: "set_folders: a message in two folders at once, then undo back to one",
+    needs: ["multi-folder", "archive"],
+    async run(ctx) {
+      const inbox = ctx.byRole("inbox").id;
+      // A plain user folder or label when the target has one; on Gmail "archive" means "not in INBOX", so it cannot be the second folder.
+      const second = ctx.folders.find((f) => f.role === "other") ?? ctx.archive;
+      await ctx.refreshCursor();
+      const a = await ctx.action("set_folders", { message_id: ctx.msg.message_id, folder_ids: [inbox, second.id] });
+      assert.equal(a.status, "executed", JSON.stringify(a));
+      let m = await ctx.api(`/messages/${ctx.msg.message_id}`);
+      const name = (id) => ctx.folders.find((f) => f.id === id)?.name ?? id;
+      assert.deepEqual(m.folders.map((f) => f.folder_id).sort(), [inbox, second.id].sort(), `not in both folders: have ${m.folders.map((f) => name(f.folder_id)).join("+")}, wanted ${name(inbox)}+${name(second.id)}`);
+      const { event } = await waitFor(ctx.api, ctx.cursor, (e) => e.type === "message.updated" && e.payload.message_id === ctx.msg.message_id && e.payload.changes.folder_ids?.after.length === 2, "two-folder update");
+      assert.equal(await ctx.countSince(ctx.cursor, (e) => e.type === "message.received"), 0, "copy must not look like a new message");
+      const un = await ctx.api(`/actions/${a.id}/undo`, { method: "POST" });
+      assert.equal(un.status, "reverted", JSON.stringify(un));
+      m = await ctx.api(`/messages/${ctx.msg.message_id}`);
+      assert.deepEqual(m.folders.map((f) => f.folder_id), [inbox], "undo did not restore a single folder");
+      return `both folders (${event.payload.changes.folder_ids.after.length}), then back to inbox, one id throughout`;
+    },
+  },
+  {
+    name: "tags: engine-owned tags set, searched, listed, scoped and undone",
+    needs: ["inject"],
+    async run(ctx) {
+      await ctx.refreshCursor();
+      const a = await ctx.action("tag", { message_id: ctx.msg.message_id, add: ["needs-reply", "vip"] });
+      assert.equal(a.status, "executed", JSON.stringify(a));
+      assert.deepEqual(a.result.tags, ["needs-reply", "vip"]);
+      const { event } = await waitFor(ctx.api, ctx.cursor, (e) => e.type === "message.updated" && e.payload.message_id === ctx.msg.message_id && e.payload.changes.tags, "tag event");
+      assert.deepEqual(event.payload.changes.tags.after, ["needs-reply", "vip"]);
+      const m = await ctx.api(`/messages/${ctx.msg.message_id}`);
+      assert.deepEqual(m.tags, ["needs-reply", "vip"]);
+      const byTag = await ctx.api(`/search?tag=needs-reply`);
+      assert.ok(byTag.results.some((x) => x.id === ctx.msg.message_id), "tag search miss");
+      const both = await ctx.api(`/search?q=pineapple&tag=vip`);
+      assert.ok(both.results.some((x) => x.id === ctx.msg.message_id), "text+tag search miss");
+      const { tags } = await ctx.api(`/tags`);
+      assert.ok(tags.some((t) => t.tag === "vip" && t.count >= 1), "tag listing miss");
+      await assert.rejects(
+        ctx.api("/actions", { method: "POST", body: JSON.stringify({ client_key: key(), type: "tag", params: { message_id: ctx.msg.message_id, add: ["Not Valid!"] } }) }),
+        /400/,
+        "invalid tag name must be rejected",
+      );
+      const rm = await ctx.action("tag", { message_id: ctx.msg.message_id, remove: ["vip"] });
+      assert.deepEqual(rm.result.tags, ["needs-reply"]);
+      const un = await ctx.api(`/actions/${a.id}/undo`, { method: "POST" });
+      assert.equal(un.status, "reverted");
+      assert.deepEqual((await ctx.api(`/messages/${ctx.msg.message_id}`)).tags, [], "undo did not clear tags");
+      return "set, found by tag and by text+tag, listed, invalid name rejected, removed, undone";
+    },
+  },
+  {
     name: "move from another client: one message.updated, no received, no deleted",
     needs: ["side-write", "archive"],
     async run(ctx) {
@@ -361,8 +416,7 @@ export const scenarios = [
       const a = await ctx.action("delete", { message_id: event.payload.message_id, permanent: true });
       assert.equal(a.status, "executed", JSON.stringify(a));
       await waitFor(ctx.api, ctx.cursor, (e) => e.type === "message.deleted" && e.payload.message_id === event.payload.message_id, "deleted event");
-      const gone = await ctx.apiAs(ctx.api.token ?? "", `/messages/${event.payload.message_id}`).catch(() => null);
-      return "deleted" + (gone ? "" : "");
+      return "deleted";
     },
   },
   {

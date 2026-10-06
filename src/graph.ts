@@ -166,6 +166,12 @@ export class GraphAdapter implements Adapter {
     return m?.id ?? ref; // immutable ids: the same id, but take the server's word for it
   }
 
+  async copy(_fromPath: string, ref: string, toPath: string): Promise<string | null> {
+    // A Graph copy is a new message with its own id; the engine merges it by Message-ID into one message with two links.
+    const m = await this.api<{ id: string }>(`/messages/${ref}/copy`, { method: "POST", body: JSON.stringify({ destinationId: toPath }) });
+    return m?.id ?? null;
+  }
+
   async expunge(path: string, ref: string) {
     // Graph's DELETE moves a message to Deleted Items unless it is already there, where it is permanent.
     // Immutable ids survive the move, so: move into Deleted Items first, then delete.

@@ -266,6 +266,13 @@ export class JmapAdapter implements Adapter {
     return ref; // JMAP ids are account-wide, a move keeps the id
   }
 
+  async setFolders(ref: string, folderPaths: string[], currentPaths: string[]) {
+    const patch: Record<string, unknown> = {};
+    for (const p of folderPaths) if (!currentPaths.includes(p)) patch[`mailboxIds/${p}`] = true;
+    for (const p of currentPaths) if (!folderPaths.includes(p)) patch[`mailboxIds/${p}`] = null;
+    if (Object.keys(patch).length) await this.set({ [ref]: patch });
+  }
+
   async expunge(_path: string, ref: string) {
     const [res] = await this.call([["Email/set", { destroy: [ref] }, "s"]]);
     if (res.notDestroyed?.[ref]) throw new Error(`JMAP destroy failed: ${res.notDestroyed[ref].type}`);

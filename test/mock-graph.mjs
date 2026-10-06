@@ -149,11 +149,18 @@ serve(port, async ({ method, url, headers, body }) => {
     addMessage(Buffer.from(body.toString("utf8"), "base64"), folderId("sentitems"), { isRead: true });
     return [202];
   }
-  const mm = /^\/messages\/([^/]+)(\/move|\/\$value)?$/.exec(r);
+  const mm = /^\/messages\/([^/]+)(\/move|\/copy|\/\$value)?$/.exec(r);
   if (mm) {
     const m = messages.get(mm[1]);
     if (!m) return [404, { error: { code: "ErrorItemNotFound", message: "message not found" } }];
     if (mm[2] === "/$value") return [200, m.raw, "message/rfc822"];
+    if (mm[2] === "/copy") {
+      // Graph copies are new messages with their own ids and the same headers.
+      const dest = folderId(json.destinationId);
+      if (!dest) return [404, { error: { code: "ErrorItemNotFound", message: "destination not found" } }];
+      const c = addMessage(m.raw, dest, { isRead: m.isRead, flagged: m.flagged });
+      return [201, toJson(c)];
+    }
     if (mm[2] === "/move") {
       const dest = folderId(json.destinationId);
       if (!dest) return [404, { error: { code: "ErrorItemNotFound", message: "destination not found" } }];

@@ -103,6 +103,14 @@ CREATE TABLE IF NOT EXISTS timers (
   fired INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS timers_due ON timers(fired, fire_at);
+CREATE TABLE IF NOT EXISTS tags (
+  message_id TEXT NOT NULL,
+  tag TEXT NOT NULL,
+  set_by TEXT NOT NULL,
+  set_at TEXT NOT NULL,
+  PRIMARY KEY (message_id, tag)
+);
+CREATE INDEX IF NOT EXISTS tags_tag ON tags(tag);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   id UNINDEXED, subject, participants, snippet
 );
@@ -256,6 +264,20 @@ export function openStore(path: string) {
     ),
     dueTimers: db.prepare(`SELECT * FROM timers WHERE fired = 0 AND fire_at <= ? ORDER BY fire_at LIMIT 100`),
     markTimer: db.prepare(`UPDATE timers SET fired = ? WHERE id = ?`),
+    tagsOf: db.prepare(`SELECT tag FROM tags WHERE message_id = ? ORDER BY tag`),
+    addTag: db.prepare(`INSERT OR IGNORE INTO tags (message_id, tag, set_by, set_at) VALUES (?, ?, ?, ?)`),
+    removeTag: db.prepare(`DELETE FROM tags WHERE message_id = ? AND tag = ?`),
+    messagesByTag: db.prepare(
+      `SELECT m.* FROM tags t JOIN messages m ON m.id = t.message_id WHERE t.tag = ? ORDER BY m.date DESC LIMIT ?`,
+    ),
+    searchWithTag: db.prepare(
+      `SELECT m.* FROM messages_fts f JOIN messages m ON m.id = f.id JOIN tags t ON t.message_id = m.id
+       WHERE messages_fts MATCH ? AND t.tag = ? ORDER BY rank LIMIT ?`,
+    ),
+    tagCounts: db.prepare(
+      `SELECT t.tag, COUNT(*) AS count FROM tags t JOIN messages m ON m.id = t.message_id
+       WHERE (? = '' OR m.account = ?) GROUP BY t.tag ORDER BY count DESC, t.tag`,
+    ),
     insertToken: db.prepare(`INSERT INTO tokens (id, secret_hash, scope) VALUES (?, ?, ?)`),
     tokenByHash: db.prepare(`SELECT id, scope FROM tokens WHERE secret_hash = ?`),
     tokens: db.prepare(`SELECT id, scope FROM tokens`),
@@ -469,6 +491,29 @@ export function openStore(path: string) {
     },
     markTimer(id: string, state: 1 | 2) {
       q.markTimer.run(state, id); // 1 = fired, 2 = cancelled
+    },
+
+    // ----- tags (engine-owned) -----
+    tagsOf(messageId: string): string[] {
+      return (q.tagsOf.all(messageId) as { tag: string }[]).map((t) => t.tag);
+    },
+    setTags(messageId: string, add: string[], remove: string[], by: string): { before: string[]; after: string[] } {
+      const before = this.tagsOf(messageId);
+      const t = now();
+      db.transaction(() => {
+        for (const tag of add) q.addTag.run(messageId, tag, by, t);
+        for (const tag of remove) q.removeTag.run(messageId, tag);
+      })();
+      return { before, after: this.tagsOf(messageId) };
+    },
+    messagesByTag(tag: string, limit = 50): MessageRow[] {
+      return (q.messagesByTag.all(tag, limit) as any[]).map(rowToMessage);
+    },
+    searchWithTag(query: string, tag: string, limit = 50): MessageRow[] {
+      return (q.searchWithTag.all(query, tag, limit) as any[]).map(rowToMessage);
+    },
+    tagCounts(account = ""): { tag: string; count: number }[] {
+      return q.tagCounts.all(account, account) as { tag: string; count: number }[];
     },
 
     // ----- tokens -----

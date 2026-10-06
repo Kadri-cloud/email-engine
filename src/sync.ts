@@ -598,6 +598,19 @@ export class Engine {
         await r.syncPaths([folder.path]);
         break;
       }
+      case "set_folders": {
+        const m = this.store.messageById(a.params.message_id);
+        if (!m) throw new Error("message no longer exists");
+        await this.applyFolders(r, m, j.before);
+        break;
+      }
+      case "tag": {
+        const m = this.store.messageById(a.params.message_id);
+        if (!m) throw new Error("message no longer exists");
+        const current = this.store.tagsOf(m.id);
+        this.applyTags(m, j.before.filter((t: string) => !current.includes(t)), current.filter((t) => !j.before.includes(t)), by);
+        break;
+      }
       case "create_draft": {
         const drafts = r.folderById(j.folder_id);
         if (drafts && j.ref) {
@@ -679,6 +692,18 @@ export class Engine {
         await r.syncPaths([folder.path]);
         return { journal: { before: m.flags }, result: { flags: this.store.messageById(m.id)?.flags } };
       }
+      case "set_folders": {
+        const m = this.need(p.message_id);
+        const before = this.store.foldersOfMessage(m.id).map((l) => l.folder_id);
+        await this.applyFolders(r, m, p.folder_ids);
+        const after = this.store.foldersOfMessage(m.id).map((l) => l.folder_id);
+        return { journal: { before }, result: { folder_ids: after } };
+      }
+      case "tag": {
+        const m = this.need(p.message_id);
+        const { before, after } = this.applyTags(m, p.add, p.remove, a.requested_by);
+        return { journal: { before }, result: { tags: after } };
+      }
       case "delete": {
         const m = this.need(p.message_id);
         const { folder, ref } = r.locate(m);
@@ -734,6 +759,51 @@ export class Engine {
       default:
         throw new Error(`unknown action ${a.type}`);
     }
+  }
+
+  /**
+   * Put a message in exactly these folders. Label providers do it in one call; folder providers get
+   * a move when one folder replaces one, otherwise copies into the new folders and removal from the old.
+   */
+  private async applyFolders(r: AccountRunner, m: MessageRow, folderIds: string[]) {
+    const links = this.store.foldersOfMessage(m.id);
+    const current = links.map((l) => l.folder_id);
+    const target = [...new Set(folderIds)];
+    const toFolder = (id: string) => {
+      const f = r.folderById(id);
+      if (!f) throw new Error(`unknown folder ${id}`);
+      return f;
+    };
+    const add = target.filter((id) => !current.includes(id)).map(toFolder);
+    const remove = links.filter((l) => !target.includes(l.folder_id)).map((l) => ({ ...toFolder(l.folder_id), ref: l.ref }));
+    if (!add.length && !remove.length) return;
+    const anyLink = links[0];
+    if (!anyLink) throw new Error(`message ${m.id} has no folder on the server`);
+
+    if (r.adapter.setFolders) {
+      await r.adapter.setFolders(anyLink.ref, target.map((id) => toFolder(id).path), current.map((id) => toFolder(id).path));
+    } else if (add.length === 1 && remove.length === 1 && target.length === 1) {
+      await r.adapter.move(remove[0]!.path, remove[0]!.ref, add[0]!.path);
+    } else {
+      if (add.length && !r.adapter.copy) throw new Error("this provider keeps a message in one folder; use move");
+      for (const f of add) await r.adapter.copy!(toFolder(anyLink.folder_id).path, anyLink.ref, f.path);
+      for (const f of remove) await r.adapter.expunge(f.path, f.ref);
+    }
+    await r.syncPaths([...new Set([...current, ...target].map((id) => toFolder(id).path))]);
+  }
+
+  /** Engine-owned tags: stored here, never on the server. Emits one message.updated with the tag change. */
+  private applyTags(m: MessageRow, add: string[], remove: string[], by: string) {
+    const change = this.store.setTags(m.id, add, remove, by);
+    if (JSON.stringify(change.before) !== JSON.stringify(change.after)) {
+      this.emit("message.updated", m.account, now(), {
+        message_id: m.id,
+        thread_id: m.thread_id,
+        folder_ids: this.store.foldersOfMessage(m.id).map((l) => l.folder_id),
+        changes: { tags: change },
+      });
+    }
+    return change;
   }
 
   private async compose(r: AccountRunner, p: any, agent = false): Promise<{ raw: Buffer; messageId: string }> {

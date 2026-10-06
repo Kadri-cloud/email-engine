@@ -90,7 +90,7 @@ serve(port, async ({ method, url, headers, body }) => {
   }
   if (p === "/_mock/purge") {
     for (const m of [...messages.values()]) remove(m);
-    labelIdFor("Archive");
+    labelIdFor("Projects"); // a user label, as real accounts have; "Archive" on Gmail is the absence of INBOX, not a label
     return [200, { ok: true }];
   }
   if (p === "/_mock/capabilities") return [200, []];

@@ -93,21 +93,28 @@ export function createApi(engine: Engine, adminToken: string) {
   });
 
   // ----- reads -----
+  const present = (s: Scope, m: any) => ({ ...m, snippet: redact(m.snippet, s.redact), tags: store.tagsOf(m.id), as_of: asOf(m.account) });
+
+  // Full-text search, a tag filter, or both.
   app.get("/search", (c) => {
     const s = c.get("scope");
-    const q = c.req.query("q") ?? "";
-    if (!q.trim()) return c.json({ results: [] });
-    const results = store
-      .search(q, Number(c.req.query("limit") ?? 50))
-      .filter((m) => messageVisible(s, m))
-      .map((m) => ({ ...m, snippet: redact(m.snippet, s.redact), as_of: asOf(m.account) }));
-    return c.json({ results });
+    const q = (c.req.query("q") ?? "").trim();
+    const tag = (c.req.query("tag") ?? "").trim();
+    const limit = Number(c.req.query("limit") ?? 50);
+    if (!q && !tag) return c.json({ results: [] });
+    const rows = q && tag ? store.searchWithTag(q, tag, limit) : q ? store.search(q, limit) : store.messagesByTag(tag, limit);
+    return c.json({ results: rows.filter((m) => messageVisible(s, m)).map((m) => present(s, m)) });
+  });
+  app.get("/tags", (c) => {
+    const s = c.get("scope");
+    const counts = s.accounts.length === 1 ? store.tagCounts(s.accounts[0]) : store.tagCounts();
+    return c.json({ tags: counts });
   });
   app.get("/messages/:id", (c) => {
     const s = c.get("scope");
     const m = store.messageById(c.req.param("id"));
     if (!m || !messageVisible(s, m)) return c.json({ error: "not found" }, 404);
-    return c.json({ ...m, snippet: redact(m.snippet, s.redact), folders: store.foldersOfMessage(m.id), as_of: asOf(m.account) });
+    return c.json({ ...present(s, m), folders: store.foldersOfMessage(m.id) });
   });
   app.get("/messages/:id/body", async (c) => {
     const s = c.get("scope");
@@ -127,7 +134,7 @@ export function createApi(engine: Engine, adminToken: string) {
     const messages = store
       .threadMessages(c.req.param("id"))
       .filter((m) => messageVisible(s, m))
-      .map((m) => ({ ...m, snippet: redact(m.snippet, s.redact) }));
+      .map((m) => present(s, m));
     return messages.length ? c.json({ messages, as_of: asOf(messages[0]!.account) }) : c.json({ error: "not found" }, 404);
   });
 

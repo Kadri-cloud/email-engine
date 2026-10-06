@@ -374,6 +374,18 @@ export class ImapAdapter implements Adapter {
     );
   }
 
+  async copy(fromPath: string, ref: string, toPath: string): Promise<string | null> {
+    return this.withFolder(
+      fromPath,
+      async (c) => {
+        const r = await c.messageCopy(ref, toPath, { uid: true });
+        const uid = r ? r.uidMap?.get(Number(ref)) : undefined;
+        return uid ? String(uid) : null;
+      },
+      false,
+    );
+  }
+
   async expunge(path: string, ref: string) {
     await this.withFolder(
       path,

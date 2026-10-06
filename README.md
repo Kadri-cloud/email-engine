@@ -19,6 +19,8 @@ A self-hosted engine that turns any mailbox into one ordered event stream, with 
 - **Lets plug-ins publish** derived events (`classify.newsletter`, `extract.invoice`) onto the same log, under their own namespace.
 - **Owns the clock**: schedule a timer, receive a `timer.fired` event. Snooze, follow-ups and scheduled send are built on it.
 - **Indexes locally** in SQLite with full-text search. Bodies are fetched on demand.
+- **Models folders as a set.** A message is in a set of folders, one on most servers, several on label providers or as copies. `set_folders` is the primitive and `move` is sugar for the one-to-one case.
+- **Keeps engine-owned tags.** Labels that live in the engine and never on the mail server, such as `needs-reply` or `invoice.paid`, visible to every consumer that can see the message, searchable, journaled and undoable.
 
 ## Quick start
 
@@ -71,7 +73,8 @@ All routes except `/health` need `Authorization: Bearer <token>`: either the adm
 | `GET /events?after=N&limit=500` | The log from a cursor, filtered to the token's scope |
 | `GET /stream?after=N` | Server-Sent Events: replay from a cursor, then live |
 | `POST /events` | Publish a derived event (tokens with `publish: true`) |
-| `GET /search?q=` | Full-text search over the local index |
+| `GET /search?q=&tag=` | Full-text search over the local index, a tag filter, or both |
+| `GET /tags` | Engine-owned tags in use, with counts |
 | `GET /messages/:id` | Message metadata and folder links |
 | `GET /messages/:id/body` | Parsed body, fetched from the server on demand |
 | `GET /threads/:id` | Messages in a thread, in order |
@@ -88,7 +91,9 @@ All routes except `/health` need `Authorization: Bearer <token>`: either the adm
 
 ### Actions
 
-`move`, `set_flags`, `delete`, `create_draft`, `send`, `schedule_timer`, plus the controls `propose`, `approve`, `reject`, `undo`. Every mutating call carries a `client_key`; repeating a key returns the original action and does nothing.
+`set_folders`, `move`, `set_flags`, `tag`, `delete`, `create_draft`, `send`, `schedule_timer`, plus the controls `propose`, `approve`, `reject`, `undo`. Every mutating call carries a `client_key`; repeating a key returns the original action and does nothing.
+
+`set_folders` takes the complete set of folder ids a message should be in. Label providers apply it in one call; on IMAP and Graph a second folder becomes a second copy, which the engine recognises as the same message with two links. `tag` adds or removes engine-owned tags; names are lowercase with dots, dashes or colons, and every change is one `message.updated` carrying `changes.tags`.
 
 ```bash
 curl -X POST "http://127.0.0.1:8080/actions?mode=propose" \
@@ -128,7 +133,7 @@ The MCP server is a thin consumer of the HTTP API that holds one scoped token. W
 }
 ```
 
-Tools: `search_mail`, `get_message`, `get_thread`, `list_accounts_and_folders`, `list_events`, `move_message`, `set_flags`, `delete_message`, `create_draft`, `send_mail`, `schedule_timer`, `get_action`, `approve_action`, `reject_action`, `undo_action`. With a `propose_only` token every write comes back as a proposal for a human to approve. `node test/mcp-smoke.mjs` drives the server as a client and checks all of this.
+Tools: `search_mail` (text, tag or both), `get_message`, `get_thread`, `list_accounts_and_folders`, `list_events`, `list_tags`, `set_folders`, `move_message`, `set_flags`, `tag_message`, `delete_message`, `create_draft`, `send_mail`, `schedule_timer`, `get_action`, `approve_action`, `reject_action`, `undo_action`. With a `propose_only` token every write comes back as a proposal for a human to approve. `node test/mcp-smoke.mjs` drives the server as a client and checks all of this.
 
 ## Configuration
 

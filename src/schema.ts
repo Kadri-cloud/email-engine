@@ -98,6 +98,7 @@ export const EventPayloads = {
       folder_ids: z
         .object({ before: z.array(z.string()), after: z.array(z.string()) })
         .optional(),
+      tags: z.object({ before: z.array(z.string()), after: z.array(z.string()) }).optional(),
     }),
   }),
   "message.deleted": z.object({
@@ -175,8 +176,15 @@ const Draft = z.object({
   in_reply_to: z.string().optional(), // engine message id
 });
 
+/** Engine-owned tag names: lowercase, dotted or dashed, at most 64 characters. */
+export const TagName = z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,63}$/, "lowercase letters, digits, . _ : -");
+
 export const ActionParams = {
   move: z.object({ message_id: z.string(), to_folder_id: z.string() }),
+  /** The complete set of folders a message should be in. The primitive; move is sugar for a one-to-one change. */
+  set_folders: z.object({ message_id: z.string(), folder_ids: z.array(z.string()).min(1) }),
+  /** Engine-owned tags: live in the engine, never on the server, visible to every consumer that can see the message. */
+  tag: z.object({ message_id: z.string(), add: z.array(TagName).default([]), remove: z.array(TagName).default([]) }),
   set_flags: z.object({ message_id: z.string(), set: Flags.partial() }),
   delete: z.object({ message_id: z.string(), permanent: z.boolean().default(false) }),
   create_draft: Draft,

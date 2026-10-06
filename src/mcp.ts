@@ -38,13 +38,13 @@ const server = new McpServer({ name: "email-engine", version: "0.0.1" });
 server.registerTool(
   "search_mail",
   {
-    description: "Full-text search over the local mail index (subject, people, snippet). Fast, never touches the mail server. Results carry a trust level and as_of, the time of the last sync.",
-    inputSchema: { query: z.string(), limit: z.number().int().min(1).max(200).default(25) },
+    description: "Full-text search over the local mail index (subject, people, snippet), optionally filtered to an engine-owned tag. Fast, never touches the mail server. Results carry a trust level, tags and as_of, the time of the last sync.",
+    inputSchema: { query: z.string().default(""), tag: z.string().optional(), limit: z.number().int().min(1).max(200).default(25) },
   },
-  async ({ query, limit }) => {
+  async ({ query, tag, limit }) => {
     try {
-      const { results } = await api(`/search?q=${encodeURIComponent(query)}&limit=${limit}`);
-      return json(results.map((m: any) => ({ id: m.id, thread_id: m.thread_id, date: m.date, from: m.from, subject: m.subject, snippet: m.snippet, trust: m.trust, flags: m.flags, as_of: m.as_of })));
+      const { results } = await api(`/search?q=${encodeURIComponent(query)}${tag ? `&tag=${encodeURIComponent(tag)}` : ""}&limit=${limit}`);
+      return json(results.map((m: any) => ({ id: m.id, thread_id: m.thread_id, date: m.date, from: m.from, subject: m.subject, snippet: m.snippet, trust: m.trust, flags: m.flags, tags: m.tags, as_of: m.as_of })));
     } catch (e) {
       return fail(e);
     }
@@ -116,6 +116,23 @@ server.registerTool(
   { description: "Move a message to a folder (by folder id). Reversible with undo_action.", inputSchema: { message_id: z.string(), to_folder_id: z.string(), client_key: ClientKey } },
   async ({ message_id, to_folder_id, client_key }) => action("move", { message_id, to_folder_id }, client_key).then(json, fail),
 );
+server.registerTool(
+  "set_folders",
+  {
+    description: "Put a message in exactly these folders (by folder id). The primitive behind move: one folder is a move, several is a message in more than one place where the provider allows it. Reversible with undo_action.",
+    inputSchema: { message_id: z.string(), folder_ids: z.array(z.string()).min(1), client_key: ClientKey },
+  },
+  async ({ message_id, folder_ids, client_key }) => action("set_folders", { message_id, folder_ids }, client_key).then(json, fail),
+);
+server.registerTool(
+  "tag_message",
+  {
+    description: "Add or remove engine-owned tags on a message: labels that live in the engine, never on the mail server, and that every consumer who can see the message also sees. Names are lowercase, e.g. needs-reply, invoice.paid. Reversible.",
+    inputSchema: { message_id: z.string(), add: z.array(z.string()).default([]), remove: z.array(z.string()).default([]), client_key: ClientKey },
+  },
+  async ({ message_id, add, remove, client_key }) => action("tag", { message_id, add, remove }, client_key).then(json, fail),
+);
+server.registerTool("list_tags", { description: "Engine-owned tags in use, with message counts.", inputSchema: {} }, async () => api("/tags").then(json, fail));
 server.registerTool(
   "set_flags",
   { description: "Mark a message seen/unseen, flagged, or answered. Reversible.", inputSchema: { message_id: z.string(), seen: z.boolean().optional(), flagged: z.boolean().optional(), answered: z.boolean().optional(), client_key: ClientKey } },
