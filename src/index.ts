@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { openStore } from "./store.js";
 import { Engine } from "./sync.js";
@@ -13,7 +13,19 @@ mkdirSync(DATA, { recursive: true });
 const token = process.env.ENGINE_TOKEN ?? randomBytes(16).toString("hex");
 if (!process.env.ENGINE_TOKEN) console.log(JSON.stringify({ msg: "generated admin token", token }));
 
-const store = openStore(`${DATA}/engine.db`);
+// The secret that encrypts account credentials at rest. From the environment, or generated once
+// and kept beside the database, so a copied database file is useless without it.
+let secret = process.env.ENGINE_SECRET;
+if (!secret) {
+  const file = `${DATA}/engine.secret`;
+  if (!existsSync(file)) {
+    writeFileSync(file, randomBytes(32).toString("hex"), { mode: 0o600 });
+    console.log(JSON.stringify({ msg: "generated engine secret", file }));
+  }
+  secret = readFileSync(file, "utf8").trim();
+}
+
+const store = openStore(`${DATA}/engine.db`, secret);
 const engine = new Engine(store, { webhookUrl: WEBHOOK, dataDir: DATA });
 const app = createApi(engine, token);
 

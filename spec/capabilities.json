@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "folders": {
+      "type": "string",
+      "enum": [
+        "folders",
+        "labels"
+      ]
+    },
+    "push": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "jmap",
+        "pubsub",
+        "graph",
+        "smtp",
+        "none"
+      ]
+    },
+    "incremental_sync": {
+      "type": "string",
+      "enum": [
+        "qresync",
+        "condstore",
+        "uidnext",
+        "history",
+        "delta",
+        "none"
+      ]
+    },
+    "undo_send_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "server_rules": {
+      "type": "string",
+      "enum": [
+        "sieve",
+        "gmail_filters",
+        "none"
+      ]
+    },
+    "max_connections": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "send_limit_per_day": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "threads": {
+      "type": "string",
+      "enum": [
+        "native",
+        "hint",
+        "none"
+      ]
+    },
+    "permanent_delete": {
+      "type": "boolean"
+    },
+    "sent_copy": {
+      "type": "string",
+      "enum": [
+        "client",
+        "server"
+      ]
+    }
+  },
+  "required": [
+    "folders",
+    "push",
+    "incremental_sync",
+    "undo_send_seconds",
+    "server_rules",
+    "max_connections",
+    "send_limit_per_day",
+    "threads",
+    "permanent_delete",
+    "sent_copy"
+  ],
+  "additionalProperties": false,
+  "$id": "https://email-engine.dev/spec/capabilities.json",
+  "title": "capabilities",
+  "description": "The capability descriptor an account exposes after connecting: what its provider can do."
+}

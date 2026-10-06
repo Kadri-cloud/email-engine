@@ -519,19 +519,31 @@ export class Engine {
   }
 
   // ----- reads that need the server -----
-  async fetchBody(m: MessageRow) {
+  // ponytail: the source is fetched and parsed on every call; an on-disk cache lands with the body-cache item.
+  private async fetchParsed(m: MessageRow) {
     const r = this.runner(m.account);
     const { folder, ref } = r.locate(m);
     const raw = await r.adapter.source(folder.path, ref);
-    if (!raw) return null;
-    const p = await simpleParser(raw);
+    return raw ? simpleParser(raw) : null;
+  }
+
+  async fetchBody(m: MessageRow) {
+    const p = await this.fetchParsed(m);
+    if (!p) return null;
     const text = p.text ?? "";
     if (!m.snippet && text) this.store.setSnippet(m.id, text.replace(/\s+/g, " ").slice(0, 300));
     return {
       text,
       html: typeof p.html === "string" ? p.html : null,
-      attachments: p.attachments.map((a) => ({ filename: a.filename ?? null, content_type: a.contentType, size: a.size })),
+      attachments: p.attachments.map((a, index) => ({ index, filename: a.filename ?? null, content_type: a.contentType, size: a.size })),
     };
+  }
+
+  async fetchAttachment(m: MessageRow, index: number) {
+    const p = await this.fetchParsed(m);
+    const a = p?.attachments[index];
+    if (!a) return null;
+    return { filename: a.filename ?? `attachment-${index}`, contentType: a.contentType || "application/octet-stream", content: a.content };
   }
 
   // ----- actions -----

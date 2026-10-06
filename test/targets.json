@@ -20,7 +20,8 @@
       "port": 993,
       "user": "alice",
       "pass": "pass"
-    }
+    },
+    "destructive": true
   },
   {
     "name": "stalwart-imap",
@@ -35,6 +36,13 @@
         "user": "carol",
         "pass": "pass",
         "insecure_tls": true
+      },
+      "smtp": {
+        "host": "127.0.0.1",
+        "port": 1587,
+        "secure": false,
+        "user": "carol",
+        "pass": "pass"
       }
     },
     "side": {
@@ -43,6 +51,17 @@
       "port": 1993,
       "user": "carol",
       "pass": "pass"
+    },
+    "destructive": true,
+    "send_to": {
+      "address": "bob@example.com",
+      "side": {
+        "kind": "imap",
+        "host": "127.0.0.1",
+        "port": 1993,
+        "user": "bob",
+        "pass": "pass"
+      }
     }
   },
   {
@@ -63,6 +82,17 @@
       "port": 1993,
       "user": "bob",
       "pass": "pass"
+    },
+    "destructive": true,
+    "send_to": {
+      "address": "carol@example.com",
+      "side": {
+        "kind": "imap",
+        "host": "127.0.0.1",
+        "port": 1993,
+        "user": "carol",
+        "pass": "pass"
+      }
     }
   },
   {
@@ -86,7 +116,8 @@
     "side": {
       "kind": "mock",
       "url": "http://127.0.0.1:18500"
-    }
+    },
+    "destructive": true
   },
   {
     "name": "graph-mock",
@@ -110,7 +141,8 @@
     "side": {
       "kind": "mock",
       "url": "http://127.0.0.1:18510"
-    }
+    },
+    "destructive": true
   },
   {
     "name": "inbound-smtp",
@@ -127,6 +159,7 @@
       "kind": "smtp",
       "host": "127.0.0.1",
       "port": 2525
-    }
+    },
+    "destructive": true
   }
 ]

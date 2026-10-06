@@ -1,6 +1,6 @@
 {
   "name": "email-engine",
-  "version": "0.0.1",
+  "version": "0.1.0-beta.0",
   "private": true,
   "description": "Self-hosted engine that turns any mailbox into one ordered event stream with safe, reversible actions.",
   "license": "Apache-2.0",
@@ -12,7 +12,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "mcp": "node dist/mcp.js",
-    "test": "tsc && node --test \"dist/**/*.test.js\""
+    "test": "tsc && node --test \"dist/**/*.test.js\"",
+    "spec": "node scripts/export-schema.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.3",

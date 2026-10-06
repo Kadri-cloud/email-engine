@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "move": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "to_folder_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_id",
+        "to_folder_id"
+      ],
+      "additionalProperties": false
+    },
+    "set_folders": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "folder_ids": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "message_id",
+        "folder_ids"
+      ],
+      "additionalProperties": false
+    },
+    "tag": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "add": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$"
+          }
+        },
+        "remove": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$"
+          }
+        }
+      },
+      "required": [
+        "message_id",
+        "add",
+        "remove"
+      ],
+      "additionalProperties": false
+    },
+    "set_flags": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "set": {
+          "type": "object",
+          "properties": {
+            "seen": {
+              "type": "boolean"
+            },
+            "flagged": {
+              "type": "boolean"
+            },
+            "answered": {
+              "type": "boolean"
+            },
+            "draft": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "message_id",
+        "set"
+      ],
+      "additionalProperties": false
+    },
+    "delete": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "permanent": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "message_id",
+        "permanent"
+      ],
+      "additionalProperties": false
+    },
+    "create_draft": {
+      "type": "object",
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "to": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "address"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "cc": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "address"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "subject": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "in_reply_to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "account",
+        "to",
+        "cc",
+        "subject",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "send": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "draft_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "draft_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "account": {
+              "type": "string"
+            },
+            "to": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "address"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "cc": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "address": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "address"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "subject": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "in_reply_to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "account",
+            "to",
+            "cc",
+            "subject",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "schedule_timer": {
+      "type": "object",
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "fire_at": {
+          "type": "string"
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "payload": {}
+      },
+      "required": [
+        "account",
+        "fire_at",
+        "event_type",
+        "payload"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "move",
+    "set_folders",
+    "tag",
+    "set_flags",
+    "delete",
+    "create_draft",
+    "send",
+    "schedule_timer"
+  ],
+  "additionalProperties": false,
+  "$id": "https://email-engine.dev/spec/action-params.json",
+  "title": "action-params",
+  "description": "Parameters per mutating action type."
+}

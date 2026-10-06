@@ -2,7 +2,7 @@
 // append-only event log, the action journal, tokens and timers. The log is the
 // truth; every delivery channel is a reader of it.
 import Database from "better-sqlite3";
-import { createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
 import type {
   AccountConfig,
   AccountStatus,
@@ -172,7 +172,30 @@ export function mintMessageId(account: string, headerMessageId: string | null, f
   return "msg_" + sha256(`${account}\n${key}`).slice(0, 24);
 }
 
-export function openStore(path: string) {
+/**
+ * Account credentials at rest: AES-256-GCM under a key derived from the engine secret.
+ * Rows written before encryption existed are plain JSON and are re-encrypted on open.
+ */
+export function makeCipher(secret: string) {
+  const key = scryptSync(secret, "email-engine:accounts:v1", 32);
+  return {
+    encrypt(text: string): string {
+      const iv = randomBytes(12);
+      const c = createCipheriv("aes-256-gcm", key, iv);
+      const ct = Buffer.concat([c.update(text, "utf8"), c.final()]);
+      return `enc1:${iv.toString("base64")}:${c.getAuthTag().toString("base64")}:${ct.toString("base64")}`;
+    },
+    decrypt(stored: string): string {
+      if (!stored.startsWith("enc1:")) return stored; // legacy plaintext
+      const [, iv, tag, ct] = stored.split(":");
+      const d = createDecipheriv("aes-256-gcm", key, Buffer.from(iv!, "base64"));
+      d.setAuthTag(Buffer.from(tag!, "base64"));
+      return Buffer.concat([d.update(Buffer.from(ct!, "base64")), d.final()]).toString("utf8");
+    },
+  };
+}
+
+export function openStore(path: string, secret?: string) {
   const db = new Database(path);
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
@@ -180,6 +203,15 @@ export function openStore(path: string) {
   // Forward-only migrations for databases created before a column existed.
   const columns = new Set((db.pragma("table_info(messages)") as { name: string }[]).map((c) => c.name));
   if (!columns.has("fingerprint")) db.exec(`ALTER TABLE messages ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''`);
+
+  const cipher = secret ? makeCipher(secret) : { encrypt: (s: string) => s, decrypt: (s: string) => s };
+  if (secret) {
+    // Re-encrypt any plaintext account rows from before the secret existed.
+    const fix = db.prepare(`UPDATE accounts SET config = ? WHERE id = ?`);
+    for (const a of db.prepare(`SELECT id, config FROM accounts`).all() as { id: string; config: string }[]) {
+      if (!a.config.startsWith("enc1:")) fix.run(cipher.encrypt(a.config), a.id);
+    }
+  }
 
   const q = {
     insertEvent: db.prepare(
@@ -336,13 +368,13 @@ export function openStore(path: string) {
     upsertAccount(config: AccountConfig) {
       const existing = q.accountByAddress.get(config.address) as any;
       const id = existing?.id ?? newId("acc");
-      q.upsertAccount.run(id, config.address, JSON.stringify(config));
+      q.upsertAccount.run(id, config.address, cipher.encrypt(JSON.stringify(config)));
       return id as string;
     },
     accounts() {
       return (q.accounts.all() as any[]).map((a) => ({
         ...a,
-        config: JSON.parse(a.config) as AccountConfig,
+        config: JSON.parse(cipher.decrypt(a.config)) as AccountConfig,
         capabilities: a.capabilities ? (JSON.parse(a.capabilities) as Capabilities) : null,
       }));
     },
@@ -533,7 +565,7 @@ export function openStore(path: string) {
     accountById(id: string) {
       const a = (q.accounts.all() as any[]).find((a) => a.id === id);
       return a
-        ? { ...a, config: JSON.parse(a.config) as AccountConfig, capabilities: a.capabilities ? (JSON.parse(a.capabilities) as Capabilities) : null }
+        ? { ...a, config: JSON.parse(cipher.decrypt(a.config)) as AccountConfig, capabilities: a.capabilities ? (JSON.parse(a.capabilities) as Capabilities) : null }
         : null;
     },
 

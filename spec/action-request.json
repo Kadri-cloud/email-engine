@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "client_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "move",
+        "set_folders",
+        "tag",
+        "set_flags",
+        "delete",
+        "create_draft",
+        "send",
+        "schedule_timer"
+      ]
+    },
+    "params": {}
+  },
+  "required": [
+    "client_key",
+    "type",
+    "params"
+  ],
+  "additionalProperties": false,
+  "$id": "https://email-engine.dev/spec/action-request.json",
+  "title": "action-request",
+  "description": "A mutating action submitted to POST /actions. `params` is typed by `type`; see action-params.json."
+}

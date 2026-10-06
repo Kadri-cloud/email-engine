@@ -70,6 +70,14 @@ serve(port, async ({ method, url, headers, body }) => {
     modify(m, add, rem);
     return [200, summary(m)];
   }
+  if (p === "/_mock/flagMany") {
+    const f = flagPatch(json.flags, true);
+    for (const mid of json.messageIds) {
+      const m = byMessageId(mid);
+      if (m) modify(m, f.flagged ? ["STARRED"] : [], f.seen ? ["UNREAD"] : []);
+    }
+    return [200, { ok: true }];
+  }
   if (p === "/_mock/flagAll") {
     const f = flagPatch(json.flags, true);
     for (const m of messages.values()) if (m.labels.has("INBOX")) modify(m, f.flagged ? ["STARRED"] : [], f.seen ? ["UNREAD"] : []);

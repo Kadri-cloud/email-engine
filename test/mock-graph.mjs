@@ -80,6 +80,17 @@ serve(port, async ({ method, url, headers, body }) => {
     touch(m);
     return [200, { ok: true }];
   }
+  if (p === "/_mock/flagMany") {
+    const f = flagPatch(json.flags, true);
+    for (const mid of json.messageIds) {
+      const m = byMessageId(mid);
+      if (!m) continue;
+      if (f.seen) m.isRead = true;
+      if (f.flagged) m.flagged = true;
+      touch(m);
+    }
+    return [200, { ok: true }];
+  }
   if (p === "/_mock/flagAll") {
     const f = flagPatch(json.flags, true);
     for (const m of messages.values()) {

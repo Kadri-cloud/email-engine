@@ -3,13 +3,23 @@
 // Usage: node test/conformance.mjs [targetName ...]   (default: all in test/targets.json)
 // Writes conformance/report.json and conformance/REPORT.md.
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { buildContext, makeApi, makeSideChannel, rfc822, runScenarios, sleep, waitFor, key } from "./scenarios.mjs";
 
-const all = JSON.parse(readFileSync(new URL("./targets.json", import.meta.url), "utf8"));
+// Built-in targets plus your own in test/targets.local.json (git-ignored; holds credentials).
+// A target runs destructively (purge, seed, exact initial-sync count) only when it says "destructive": true.
+// Everything else is non-destructive: the suite only ever touches messages it injected itself.
+const builtIn = JSON.parse(readFileSync(new URL("./targets.json", import.meta.url), "utf8"));
+const localFile = new URL("./targets.local.json", import.meta.url);
+const local = existsSync(localFile) ? JSON.parse(readFileSync(localFile, "utf8")) : [];
+const all = [...builtIn, ...local];
 const wanted = process.argv.slice(2);
 const targets = wanted.length ? all.filter((t) => wanted.includes(t.name)) : all;
+if (wanted.length && !targets.length) {
+  console.error(`no such target; known: ${all.map((t) => t.name).join(", ")}`);
+  process.exit(1);
+}
 const TOKEN = "conformance";
 const report = { generated_at: new Date().toISOString(), engine_version: JSON.parse(readFileSync("package.json", "utf8")).version, targets: [] };
 
@@ -82,8 +92,10 @@ for (const [i, target] of targets.entries()) {
   let engine = await startEngine(port, dataDir);
   const { api, apiAs } = makeApi(`http://127.0.0.1:${port}`, TOKEN);
   try {
-    // Baseline: an empty mailbox with three seeded messages, one of them a reply.
-    if (side.purge) {
+    // Baseline: an empty mailbox with three seeded messages, one of them a reply. Destructive targets only.
+    if (!target.destructive) console.log("live target: not purging, initial-sync count skipped, only injected messages are touched");
+    if (side.capabilities && !target.destructive) result.extensions = await side.capabilities();
+    if (side.purge && target.destructive) {
       await side.purge();
       const stamp = Date.now();
       await side.inject(rfc822({ to: target.account.address, subject: `Seed ${stamp} A`, messageId: `<seed-a-${stamp}@example.com>`, body: "seed a" }));
@@ -98,7 +110,7 @@ for (const [i, target] of targets.entries()) {
     await sleep(1500);
 
     // Initial sync must emit exactly the seeded messages, with the reply threaded.
-    if (side.purge) {
+    if (side.purge && target.destructive) {
       const { events } = await api("/events?after=0&limit=2000");
       const received = events.filter((e) => e.type === "message.received");
       const threads = new Set(received.map((e) => e.payload.thread_id));
@@ -107,7 +119,8 @@ for (const [i, target] of targets.entries()) {
       console.log(`${result.scenarios.at(-1).status}  ${result.scenarios.at(-1).name}  (${result.scenarios.at(-1).note})`);
     }
 
-    const ctx = await buildContext({ api, apiAs, account, side });
+    const sendTo = target.send_to ? { address: target.send_to.address, side: makeSideChannel(target.send_to.side) } : null;
+    const ctx = await buildContext({ api, apiAs, account, side, sendTo });
     result.capabilities = ctx.caps;
     result.folders = ctx.folders.map((f) => ({ name: f.name, role: f.role }));
     result.scenarios.push(...(await runScenarios(ctx, (r) => console.log(`${r.status.padEnd(4)}  ${r.name}  ${r.note ? `(${r.note})` : ""}`))));
@@ -165,6 +178,8 @@ for (const [i, target] of targets.entries()) {
     const logs = engine.logs();
     const errors = logs.split("\n").filter((l) => /error|crash/i.test(l));
     if (errors.length) result.engine_errors = errors.slice(0, 10);
+    // A live mailbox's metadata and credentials do not belong on disk after the run; keep only the logs.
+    if (!target.destructive) for (const f of ["engine.db", "engine.db-wal", "engine.db-shm", "engine.secret"]) rmSync(`${dataDir}/${f}`, { force: true });
   }
   report.targets.push(result);
 }

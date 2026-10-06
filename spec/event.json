@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "cursor": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "type": {
+      "type": "string"
+    },
+    "account": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string"
+    },
+    "observed_at": {
+      "type": "string"
+    },
+    "payload": {}
+  },
+  "required": [
+    "cursor",
+    "type",
+    "account",
+    "occurred_at",
+    "observed_at",
+    "payload"
+  ],
+  "additionalProperties": false,
+  "$id": "https://email-engine.dev/spec/event.json",
+  "title": "event",
+  "description": "The envelope every event carries. `payload` is typed by `type`; see event-payloads.json."
+}

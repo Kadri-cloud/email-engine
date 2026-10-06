@@ -20,8 +20,12 @@ export function makeApi(base, token) {
     if (status >= 400) throw new Error(`${path} -> ${status} ${JSON.stringify(body)}`);
     return body;
   };
+  api.base = base;
+  api.token = token;
   return { api, apiAs: call, base, token };
 }
+const BASE_FOR = (ctx) => ctx.api.base;
+const TOKEN_FOR = (ctx) => ctx.api.token;
 
 /** Poll the log from `after` until `pred` matches, or time out. Returns the event and the wait. */
 export async function waitFor(api, after, pred, label, timeoutMs = 15000) {
@@ -56,6 +60,7 @@ export function makeSideChannel(side) {
       inject: (raw) => post("/_mock/inject", { raw }),
       flag: (messageId, flags, add = true) => post("/_mock/flag", { messageId, flags, add }),
       flagAll: (flags) => post("/_mock/flagAll", { flags }),
+      flagMany: (messageIds, flags) => post("/_mock/flagMany", { messageIds, flags }),
       move: (messageId, destination) => post("/_mock/move", { messageId, to: destination }),
       moveBack: (messageId) => post("/_mock/move", { messageId, to: "INBOX" }),
       expunge: (messageId) => post("/_mock/expunge", { messageId }),
@@ -114,6 +119,29 @@ export function makeSideChannel(side) {
         await (add ? c.messageFlagsAdd(String(uid), flags, { uid: true }) : c.messageFlagsRemove(String(uid), flags, { uid: true }));
       }),
     flagAll: (flags) => withInbox((c) => c.messageFlagsAdd("1:*", flags, { uid: true })),
+    /** Flag only these messages. Safe on a live mailbox, unlike flagAll. */
+    flagMany: (messageIds, flags) =>
+      withInbox(async (c) => {
+        const want = new Set(messageIds.map((m) => m.replace(/[<>]/g, "").toLowerCase()));
+        const uids = [];
+        for await (const m of c.fetch("1:*", { uid: true, envelope: true }, { uid: true })) {
+          if (want.has((m.envelope?.messageId ?? "").replace(/[<>]/g, "").toLowerCase())) uids.push(m.uid);
+        }
+        assert.equal(uids.length, messageIds.length, `side channel found ${uids.length}/${messageIds.length} messages to flag`);
+        await c.messageFlagsAdd(uids.join(","), flags, { uid: true });
+      }),
+    /** Raw source of the message with this subject in INBOX, or null. */
+    rawBySubject: (subject) =>
+      withInbox(async (c) => {
+        // Finish the envelope scan before issuing another fetch; a nested fetch inside the generator stalls the connection.
+        let uid = null;
+        for await (const m of c.fetch("1:*", { uid: true, envelope: true }, { uid: true })) {
+          if (m.envelope?.subject === subject) uid = m.uid;
+        }
+        if (!uid) return null;
+        const full = await c.fetchOne(String(uid), { source: true }, { uid: true });
+        return full && full.source ? full.source.toString("utf8") : null;
+      }),
     move: (messageId, destination) =>
       withInbox(async (c) => {
         const r = await c.messageMove(String(await uidOf(c, messageId)), destination, { uid: true });
@@ -158,7 +186,7 @@ export function makeSideChannel(side) {
 }
 
 /** Everything a scenario needs about one account on one engine. */
-export async function buildContext({ api, apiAs, account, side }) {
+export async function buildContext({ api, apiAs, account, side, sendTo = null }) {
   const folders = await api(`/accounts/${account.id}/folders`);
   const byRole = (r) => folders.find((f) => f.role === r);
   const archive = byRole("archive") ?? folders.find((f) => /archive/i.test(f.name) || /archive/i.test(f.path));
@@ -174,8 +202,9 @@ export async function buildContext({ api, apiAs, account, side }) {
   if (archive) features.add("archive");
   if (byRole("drafts") && account.provider !== "inbound") features.add("drafts");
   if (byRole("trash") && account.provider !== "inbound") features.add("trash");
+  if (sendTo) features.add("send"); // the target can send, and a mailbox on the same rig receives
   return {
-    api, apiAs, account, folders, byRole, archive, caps, features, side,
+    api, apiAs, account, folders, byRole, archive, caps, features, side, sendTo,
     address: account.address,
     cursor: (await api("/health")).cursor,
     measurements: {},
@@ -190,6 +219,7 @@ export async function buildContext({ api, apiAs, account, side }) {
       const raw = rfc822({ ...fields, to: account.address, messageId });
       return side.inject(raw, account.address).then(() => messageId);
     },
+    injectRaw: (raw) => side.inject(raw, account.address),
     countSince(cursor, pred) {
       return api(`/events?after=${cursor}&limit=2000`).then(({ events }) => events.filter(pred).length);
     },
@@ -447,6 +477,80 @@ export const scenarios = [
     },
   },
   {
+    name: "attachments: listed on the message and downloadable byte for byte",
+    needs: ["inject"],
+    async run(ctx) {
+      const stamp = Date.now();
+      const boundary = `b${stamp}`;
+      const bin = Buffer.from(Array.from({ length: 1024 }, (_, i) => (i * 7 + 3) & 255));
+      const csv = "id,amount\r\n1,42\r\n2,17\r\n";
+      const raw = [
+        `From: "Files" <files@example.com>`, `To: ${ctx.address}`, `Subject: Attachments ${stamp}`, `Date: ${new Date().toUTCString()}`,
+        `Message-ID: <att-${stamp}@example.com>`, `MIME-Version: 1.0`, `Content-Type: multipart/mixed; boundary="${boundary}"`, ``,
+        `--${boundary}`, `Content-Type: text/plain; charset=utf-8`, ``, `Two files attached. Keyword: kumquat.`,
+        `--${boundary}`, `Content-Type: text/csv; name="report.csv"`, `Content-Disposition: attachment; filename="report.csv"`, ``, csv,
+        `--${boundary}`, `Content-Type: application/octet-stream; name="blob.bin"`, `Content-Disposition: attachment; filename="blob.bin"`, `Content-Transfer-Encoding: base64`, ``, bin.toString("base64"),
+        `--${boundary}--`, ``,
+      ].join("\r\n");
+      await ctx.refreshCursor();
+      await ctx.injectRaw(raw);
+      const { event } = await waitFor(ctx.api, ctx.cursor, (e) => e.type === "message.received" && e.payload.subject === `Attachments ${stamp}`, "attachment message");
+      // Providers that expose MIME structure or parse the source at sync time know about attachments immediately.
+      if (["imap", "jmap", "inbound"].includes(ctx.account.provider)) assert.equal(event.payload.has_attachments, true, "has_attachments should be true at sync time");
+      const id = event.payload.message_id;
+      const { attachments } = await ctx.api(`/messages/${id}/attachments`);
+      assert.deepEqual(attachments.map((a) => a.filename), ["report.csv", "blob.bin"], `attachments: ${JSON.stringify(attachments)}`);
+      const h = { authorization: `Bearer ${TOKEN_FOR(ctx)}` };
+      const r0 = await fetch(`${ctx.api.base ?? BASE_FOR(ctx)}/messages/${id}/attachments/0`, { headers: h });
+      assert.equal(r0.status, 200);
+      assert.match(r0.headers.get("content-type") ?? "", /text\/csv/);
+      assert.equal((await r0.text()).replace(/\r/g, ""), csv.replace(/\r/g, ""), "csv content differs");
+      const r1 = await fetch(`${ctx.api.base ?? BASE_FOR(ctx)}/messages/${id}/attachments/1`, { headers: h });
+      assert.equal(r1.status, 200);
+      assert.equal(Buffer.from(await r1.arrayBuffer()).toString("base64"), bin.toString("base64"), "binary content differs");
+      assert.match(r1.headers.get("content-disposition") ?? "", /blob\.bin/);
+      assert.equal((await fetch(`${ctx.api.base ?? BASE_FOR(ctx)}/messages/${id}/attachments/9`, { headers: h })).status, 404);
+      return "2 listed, csv and 1 KB binary identical, index 9 is 404";
+    },
+  },
+  {
+    name: "send: delivered to another mailbox, marked machine-sent, copy filed in Sent",
+    needs: ["send"],
+    async run(ctx) {
+      const stamp = Date.now();
+      const subject = `Sent ${stamp}`;
+      await ctx.refreshCursor();
+      const a = await ctx.action("send", { account: ctx.account.id, to: [{ address: ctx.sendTo.address, name: "Recipient" }], subject, text: "Sent by the engine. Keyword: durian." });
+      assert.equal(a.status, "executed", JSON.stringify(a));
+      // The recipient's mailbox, read over the side channel.
+      const start = Date.now();
+      let raw = null;
+      while (!raw && Date.now() - start < 30000) {
+        raw = await ctx.sendTo.side.rawBySubject(subject);
+        if (!raw) await sleep(500);
+      }
+      assert.ok(raw, "message never reached the recipient");
+      assert.match(raw, /^Auto-Submitted: auto-generated/m, "machine-sent header missing");
+      assert.match(raw, /Keyword: durian/);
+      // The copy may land in Sent directly, or be imported elsewhere first and moved there by the server (JMAP submission).
+      // A target can also have more than one sent-role folder; any of them counts.
+      const sentIds = ctx.folders.filter((f) => f.role === "sent").map((f) => f.id);
+      assert.ok(sentIds.length, "no sent folder");
+      const inSent = (ids) => ids.some((id) => sentIds.includes(id));
+      const { ms } = await waitFor(
+        ctx.api,
+        ctx.cursor,
+        (e) => e.payload?.message_id === a.result.message_id && ((e.type === "message.received" && inSent(e.payload.folder_ids)) || (e.type === "message.updated" && inSent(e.payload.folder_ids))),
+        "sent copy",
+        30000,
+      );
+      const copy = await ctx.api(`/messages/${a.result.message_id}`);
+      assert.ok(inSent(copy.folders.map((f) => f.folder_id)), `copy not in a sent folder: ${JSON.stringify(copy.folders)}`);
+      assert.equal(copy.subject, subject);
+      return `delivered in ${Date.now() - start} ms, sent copy after ${ms} ms, filed by ${ctx.caps?.sent_copy}`;
+    },
+  },
+  {
     name: "schedule_timer: fires as timer.fired with the payload",
     needs: [],
     async run(ctx) {
@@ -464,7 +568,8 @@ export const scenarios = [
     async run(ctx) {
       const stamp = Date.now();
       await ctx.refreshCursor();
-      for (let i = 0; i < 25; i++) await ctx.inject({ subject: `Storm ${stamp} ${i}`, body: "storm" });
+      const injected = [];
+      for (let i = 0; i < 25; i++) injected.push(await ctx.inject({ subject: `Storm ${stamp} ${i}`, body: "storm" }));
       const start = Date.now();
       for (;;) {
         if ((await ctx.countSince(ctx.cursor, (e) => e.type === "message.received" && e.payload.subject.startsWith(`Storm ${stamp}`))) === 25) break;
@@ -474,7 +579,7 @@ export const scenarios = [
       const ids = new Set((await ctx.api(`/events?after=${ctx.cursor}&limit=2000`)).events.filter((e) => e.type === "message.received" && e.payload.subject.startsWith(`Storm ${stamp}`)).map((e) => e.payload.message_id));
       await ctx.refreshCursor();
       const t0 = Date.now();
-      await ctx.side.flagAll(["\\Seen"]);
+      await ctx.side.flagMany(injected, ["\\Seen"]); // only the messages this run created, never the whole mailbox
       for (;;) {
         const n = await ctx.countSince(ctx.cursor, (e) => e.type === "message.updated" && ids.has(e.payload.message_id) && e.payload.changes.flags?.after.seen === true);
         if (n >= 25) break;

@@ -32,7 +32,7 @@ const action = (type: string, params: unknown, clientKey?: string) =>
 const Address = z.object({ address: z.string(), name: z.string().optional() });
 const ClientKey = z.string().optional().describe("Idempotency key. Repeating a key returns the original action instead of acting twice.");
 
-const server = new McpServer({ name: "email-engine", version: "0.0.1" });
+const server = new McpServer({ name: "email-engine", version: "0.1.0-beta.0" });
 
 // ----- reads -----
 server.registerTool(
@@ -62,6 +62,35 @@ server.registerTool(
       const m = await api(`/messages/${message_id}`);
       const body = include_body ? await api(`/messages/${message_id}/body`) : null;
       return json({ ...m, body });
+    } catch (e) {
+      return fail(e);
+    }
+  },
+);
+
+server.registerTool(
+  "get_attachment",
+  {
+    description: "Fetch one attachment of a message by its index from get_message. Text-like files come back as text; others as a base64 blob with their media type. Files over 5 MB are refused; fetch those over HTTP at /messages/{id}/attachments/{index}.",
+    inputSchema: { message_id: z.string(), index: z.number().int().min(0) },
+  },
+  async ({ message_id, index }) => {
+    try {
+      const r = await fetch(`${BASE}/messages/${message_id}/attachments/${index}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const type = r.headers.get("content-type") ?? "application/octet-stream";
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > 5 * 1024 * 1024) throw new Error(`attachment is ${buf.length} bytes; fetch it over HTTP instead`);
+      const name = /filename="([^"]*)"/.exec(r.headers.get("content-disposition") ?? "")?.[1] ?? `attachment-${index}`;
+      const textual = /^text\/|^application\/(json|xml|csv|x-yaml)/.test(type);
+      return {
+        content: [
+          { type: "text" as const, text: `${name} (${type}, ${buf.length} bytes)` },
+          textual
+            ? { type: "text" as const, text: buf.toString("utf8") }
+            : { type: "resource" as const, resource: { uri: `${BASE}/messages/${message_id}/attachments/${index}`, mimeType: type, blob: buf.toString("base64") } },
+        ],
+      };
     } catch (e) {
       return fail(e);
     }

@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "const": "imap"
+        },
+        "address": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        },
+        "imap": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "default": 993,
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "secure": {
+              "default": true,
+              "type": "boolean"
+            },
+            "user": {
+              "type": "string"
+            },
+            "pass": {
+              "type": "string"
+            },
+            "insecure_tls": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "host",
+            "port",
+            "secure",
+            "user",
+            "pass",
+            "insecure_tls"
+          ],
+          "additionalProperties": false
+        },
+        "smtp": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "default": 587,
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "secure": {
+              "default": false,
+              "type": "boolean"
+            },
+            "user": {
+              "type": "string"
+            },
+            "pass": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "host",
+            "port",
+            "secure",
+            "user",
+            "pass"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "provider",
+        "address",
+        "imap"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "const": "jmap"
+        },
+        "address": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        },
+        "jmap": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "user": {
+              "type": "string"
+            },
+            "pass": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "provider",
+        "address",
+        "jmap"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "const": "inbound"
+        },
+        "address": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        },
+        "inbound": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "default": "0.0.0.0",
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "user": {
+              "type": "string"
+            },
+            "pass": {
+              "type": "string"
+            },
+            "accept_any_recipient": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "host",
+            "port",
+            "accept_any_recipient"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "provider",
+        "address",
+        "inbound"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "const": "gmail"
+        },
+        "address": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        },
+        "gmail": {
+          "type": "object",
+          "properties": {
+            "client_id": {
+              "type": "string"
+            },
+            "client_secret": {
+              "type": "string"
+            },
+            "refresh_token": {
+              "type": "string"
+            },
+            "poll_seconds": {
+              "default": 30,
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 9007199254740991
+            },
+            "base_url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "token_url": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "required": [
+            "client_id",
+            "refresh_token",
+            "poll_seconds"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "provider",
+        "address",
+        "gmail"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "const": "graph"
+        },
+        "address": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        },
+        "graph": {
+          "type": "object",
+          "properties": {
+            "tenant": {
+              "default": "common",
+              "type": "string"
+            },
+            "client_id": {
+              "type": "string"
+            },
+            "client_secret": {
+              "type": "string"
+            },
+            "refresh_token": {
+              "type": "string"
+            },
+            "poll_seconds": {
+              "default": 30,
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 9007199254740991
+            },
+            "base_url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "token_url": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "required": [
+            "tenant",
+            "client_id",
+            "refresh_token",
+            "poll_seconds"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "provider",
+        "address",
+        "graph"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$id": "https://email-engine.dev/spec/account-config.json",
+  "title": "account-config",
+  "description": "Account configuration accepted by POST /accounts, one shape per provider."
+}

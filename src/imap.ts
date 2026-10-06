@@ -155,7 +155,7 @@ export class ImapAdapter implements Adapter {
       autoIdleDelay: 1000, // enter IDLE a second after the last command, so pushes arrive fast
       logger: false,
       tls: c.insecure_tls ? { rejectUnauthorized: false } : undefined,
-      clientInfo: { name: "email-engine", version: "0.0.1" },
+      clientInfo: { name: "email-engine", version: "0.1.0-beta.0" },
     });
   }
 
@@ -412,6 +412,12 @@ export class ImapAdapter implements Adapter {
   async send(raw: Buffer) {
     const s = this.cfg.smtp;
     if (!s) throw new Error("account has no SMTP configuration");
+    // Raw source carries no envelope for the library; build it from the headers.
+    const headerBlock = raw.subarray(0, Math.max(raw.indexOf("\r\n\r\n"), raw.indexOf("\n\n"), 0) || raw.length);
+    const h = parseHeaders(headerBlock);
+    const addresses = (v: string | undefined) => (v ?? "").match(/[^\s<>,;"]+@[^\s<>,;"]+/g) ?? [];
+    const to = [...addresses(h["to"]), ...addresses(h["cc"]), ...addresses(h["bcc"])];
+    if (!to.length) throw new Error("message has no recipients");
     const t = nodemailer.createTransport({
       host: s.host,
       port: s.port,
@@ -419,7 +425,7 @@ export class ImapAdapter implements Adapter {
       auth: { user: s.user, pass: s.pass },
       tls: this.cfg.imap.insecure_tls ? { rejectUnauthorized: false } : undefined,
     });
-    await t.sendMail({ raw, envelope: undefined });
+    await t.sendMail({ raw, envelope: { from: addresses(h["from"])[0] ?? this.cfg.address, to } });
   }
 
   async close() {

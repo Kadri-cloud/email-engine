@@ -129,6 +129,28 @@ export function createApi(engine: Engine, adminToken: string) {
       redacted: s.redact,
     });
   });
+  // Attachments: list, then fetch one by index as bytes.
+  app.get("/messages/:id/attachments", async (c) => {
+    const s = c.get("scope");
+    const m = store.messageById(c.req.param("id"));
+    if (!m || !messageVisible(s, m)) return c.json({ error: "not found" }, 404);
+    const body = await engine.fetchBody(m);
+    return body ? c.json({ attachments: body.attachments }) : c.json({ error: "body unavailable" }, 502);
+  });
+  app.get("/messages/:id/attachments/:index", async (c) => {
+    const s = c.get("scope");
+    const m = store.messageById(c.req.param("id"));
+    if (!m || !messageVisible(s, m)) return c.json({ error: "not found" }, 404);
+    const a = await engine.fetchAttachment(m, Number(c.req.param("index")));
+    if (!a) return c.json({ error: "no such attachment" }, 404);
+    return new Response(new Uint8Array(a.content), {
+      headers: {
+        "content-type": a.contentType,
+        "content-length": String(a.content.length),
+        "content-disposition": `attachment; filename="${a.filename.replace(/["\r\n]/g, "")}"`,
+      },
+    });
+  });
   app.get("/threads/:id", (c) => {
     const s = c.get("scope");
     const messages = store
