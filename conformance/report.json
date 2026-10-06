@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-06T07:51:10.434Z",
-  "engine_version": "0.0.1",
+  "generated_at": "2026-10-06T20:35:21.597Z",
+  "engine_version": "0.1.0-beta.0",
   "targets": [
     {
       "name": "dovecot-imap",
@@ -16,97 +16,97 @@
         {
           "name": "arrival: exactly one message.received and one thread.updated, with trust",
           "status": "PASS",
-          "ms": 1191,
-          "note": "622 ms, trust=suspicious"
+          "ms": 1183,
+          "note": "619 ms, trust=suspicious"
         },
         {
           "name": "search: full-text finds body text from the sync-time snippet",
           "status": "PASS",
-          "ms": 2,
+          "ms": 21,
           "note": "1 hit(s)"
         },
         {
           "name": "body: fetched on demand from the server and parsed",
           "status": "PASS",
-          "ms": 20,
+          "ms": 78,
           "note": "61 chars"
         },
         {
           "name": "set_flags via the engine: one message.updated with before/after",
           "status": "PASS",
-          "ms": 339,
+          "ms": 348,
           "note": "seen false -> true"
         },
         {
           "name": "flag change from another client arrives as message.updated",
           "status": "PASS",
-          "ms": 971,
-          "note": "224 ms"
+          "ms": 949,
+          "note": "206 ms"
         },
         {
           "name": "move via the engine to archive, then undo",
           "status": "PASS",
-          "ms": 117,
+          "ms": 141,
           "note": "same message id throughout"
         },
         {
           "name": "set_folders: a message in two folders at once, then undo back to one",
           "status": "PASS",
-          "ms": 74,
+          "ms": 90,
           "note": "both folders (2), then back to inbox, one id throughout"
         },
         {
           "name": "tags: engine-owned tags set, searched, listed, scoped and undone",
           "status": "PASS",
-          "ms": 12,
+          "ms": 17,
           "note": "set, found by tag and by text+tag, listed, invalid name rejected, removed, undone"
         },
         {
           "name": "move from another client: one message.updated, no received, no deleted",
           "status": "PASS",
-          "ms": 30591,
-          "note": "419 ms out, 29571 ms back in, id stable"
+          "ms": 30702,
+          "note": "413 ms out, 29584 ms back in, id stable"
         },
         {
           "name": "expunge from another client: exactly one message.deleted",
           "status": "PASS",
-          "ms": 2205,
-          "note": "838 ms"
+          "ms": 1940,
+          "note": "620 ms"
         },
         {
           "name": "idempotency: same client_key returns the same action",
           "status": "PASS",
-          "ms": 114,
-          "note": "act_f41fe168ac637871"
+          "ms": 82,
+          "note": "act_4f36b5fb0d7be074"
         },
         {
           "name": "propose -> approve: delete to trash only after approval, then undo",
           "status": "PASS",
-          "ms": 327,
+          "ms": 182,
           "note": "proposed, approved, trashed, reverted"
         },
         {
           "name": "permanent delete: exactly one message.deleted",
           "status": "PASS",
-          "ms": 624,
+          "ms": 544,
           "note": "deleted"
         },
         {
           "name": "reject: a rejected proposal never touches the server",
           "status": "PASS",
-          "ms": 5,
+          "ms": 3,
           "note": "rejected"
         },
         {
           "name": "create_draft: lands in Drafts as a draft, threaded with its parent, then undone",
           "status": "PASS",
-          "ms": 382,
+          "ms": 113,
           "note": "created in thread, then removed"
         },
         {
           "name": "attachments: listed on the message and downloadable byte for byte",
           "status": "PASS",
-          "ms": 874,
+          "ms": 527,
           "note": "2 listed, csv and 1 KB binary identical, index 9 is 404"
         },
         {
@@ -118,74 +118,74 @@
         {
           "name": "schedule_timer: fires as timer.fired with the payload",
           "status": "PASS",
-          "ms": 4967,
-          "note": "fired after 4960 ms"
+          "ms": 5883,
+          "note": "fired after 5879 ms"
         },
         {
           "name": "flag storm: 25 flag changes from another client arrive as exactly 25 updates",
           "status": "PASS",
-          "ms": 4405,
-          "note": "856 ms for 25"
+          "ms": 3627,
+          "note": "698 ms for 25"
         },
         {
           "name": "tokens: scoped token sees only allowed types in allowed folders; propose_only writes queue; forbidden verbs 403",
           "status": "PASS",
-          "ms": 171,
+          "ms": 36,
           "note": "108 visible events"
         },
         {
           "name": "redaction: one-time codes and card numbers masked for the scoped token, raw for admin, snippet too",
           "status": "PASS",
-          "ms": 627,
+          "ms": 750,
           "note": "masked for agent, raw for admin"
         },
         {
           "name": "folder scope: a message moved out of the allowed folder disappears for the scoped token, and returns",
           "status": "PASS",
-          "ms": 414,
+          "ms": 111,
           "note": "404 while archived, 200 when back"
         },
         {
           "name": "publish: a plug-in token appends a derived event; core types reserved; non-publishers refused",
           "status": "PASS",
-          "ms": 6,
+          "ms": 22,
           "note": "derived event stored with publisher name"
         },
         {
           "name": "tokens: expired and deleted tokens are unauthorized",
           "status": "PASS",
-          "ms": 2,
+          "ms": 14,
           "note": "401 for both"
         },
         {
           "name": "cursor log: strictly increasing, no gaps",
           "status": "PASS",
-          "ms": 3,
+          "ms": 13,
           "note": "165 events contiguous"
         },
         {
           "name": "offline catch-up: changes made while the engine was down arrive exactly once after restart",
           "status": "PASS",
-          "ms": 3003,
+          "ms": 3321,
           "note": "1 received, 1 updated, 0 deleted, no duplicates"
         }
       ],
       "quirks": [
-        "Push: idle, 622 ms to message.received",
-        "A message moved into the inbox by another client took 29571 ms to be noticed (server notifies late for mail copied into an already-seen state)",
-        "25 external flag changes delivered in 856 ms",
+        "Push: idle, 619 ms to message.received",
+        "A message moved into the inbox by another client took 29584 ms to be noticed (server notifies late for mail copied into an already-seen state)",
+        "25 external flag changes delivered in 698 ms",
         "Incremental sync: qresync; expunge detection: VANISHED",
         "Folder model: folders; roles: archive=Archive, drafts=Drafts, inbox=INBOX, spam=Junk, sent=Sent, trash=Trash",
         "Threads: none",
         "Sent copy filed by: client"
       ],
       "measurements": {
-        "push_ms": 622,
-        "external_flag_ms": 224,
-        "external_move_out_ms": 419,
-        "external_move_in_ms": 29571,
-        "external_expunge_ms": 838,
-        "storm_ms": 856
+        "push_ms": 619,
+        "external_flag_ms": 206,
+        "external_move_out_ms": 413,
+        "external_move_in_ms": 29584,
+        "external_expunge_ms": 620,
+        "storm_ms": 698
       },
       "extensions": [
         "IMAP4rev1",
@@ -286,91 +286,91 @@
         {
           "name": "arrival: exactly one message.received and one thread.updated, with trust",
           "status": "PASS",
-          "ms": 882,
-          "note": "216 ms, trust=suspicious"
+          "ms": 738,
+          "note": "210 ms, trust=suspicious"
         },
         {
           "name": "search: full-text finds body text from the sync-time snippet",
           "status": "PASS",
-          "ms": 2,
+          "ms": 3,
           "note": "1 hit(s)"
         },
         {
           "name": "body: fetched on demand from the server and parsed",
           "status": "PASS",
-          "ms": 58,
+          "ms": 19,
           "note": "61 chars"
         },
         {
           "name": "set_flags via the engine: one message.updated with before/after",
           "status": "PASS",
-          "ms": 342,
+          "ms": 335,
           "note": "seen false -> true"
         },
         {
           "name": "flag change from another client arrives as message.updated",
           "status": "PASS",
-          "ms": 730,
-          "note": "210 ms"
+          "ms": 481,
+          "note": "207 ms"
         },
         {
           "name": "move via the engine to archive, then undo",
           "status": "PASS",
-          "ms": 323,
+          "ms": 113,
           "note": "same message id throughout"
         },
         {
           "name": "set_folders: a message in two folders at once, then undo back to one",
           "status": "PASS",
-          "ms": 519,
+          "ms": 60,
           "note": "both folders (2), then back to inbox, one id throughout"
         },
         {
           "name": "tags: engine-owned tags set, searched, listed, scoped and undone",
           "status": "PASS",
-          "ms": 14,
+          "ms": 12,
           "note": "set, found by tag and by text+tag, listed, invalid name rejected, removed, undone"
         },
         {
           "name": "move from another client: one message.updated, no received, no deleted",
           "status": "PASS",
-          "ms": 1097,
-          "note": "207 ms out, 205 ms back in, id stable"
+          "ms": 972,
+          "note": "212 ms out, 211 ms back in, id stable"
         },
         {
           "name": "expunge from another client: exactly one message.deleted",
           "status": "PASS",
-          "ms": 1085,
-          "note": "206 ms"
+          "ms": 981,
+          "note": "214 ms"
         },
         {
           "name": "idempotency: same client_key returns the same action",
           "status": "PASS",
-          "ms": 39,
-          "note": "act_eb8a2c0914df6571"
+          "ms": 28,
+          "note": "act_0f887b0ef21f5092"
         },
         {
           "name": "propose -> approve: delete to trash only after approval, then undo",
           "status": "PASS",
-          "ms": 86,
+          "ms": 92,
           "note": "proposed, approved, trashed, reverted"
         },
         {
           "name": "permanent delete: exactly one message.deleted",
           "status": "PASS",
-          "ms": 286,
+          "ms": 285,
           "note": "deleted"
         },
         {
           "name": "reject: a rejected proposal never touches the server",
           "status": "PASS",
-          "ms": 4,
+          "ms": 3,
           "note": "rejected"
         },
         {
           "name": "create_draft: lands in Drafts as a draft, threaded with its parent, then undone",
           "status": "PASS",
-          "ms": 69,
+          "ms": 64,
           "note": "created in thread, then removed"
         },
         {
@@ -382,37 +382,298 @@
         {
           "name": "send: delivered to another mailbox, marked machine-sent, copy filed in Sent",
           "status": "PASS",
-          "ms": 55,
-          "note": "delivered in 22 ms, sent copy after 1 ms, filed by client"
+          "ms": 53,
+          "note": "delivered in 23 ms, sent copy after 1 ms, filed by client"
         },
         {
           "name": "schedule_timer: fires as timer.fired with the payload",
           "status": "PASS",
-          "ms": 6616,
-          "note": "fired after 6613 ms"
+          "ms": 3607,
+          "note": "fired after 3605 ms"
         },
         {
           "name": "flag storm: 25 flag changes from another client arrive as exactly 25 updates",
           "status": "PASS",
-          "ms": 2221,
-          "note": "462 ms for 25"
+          "ms": 2021,
+          "note": "373 ms for 25"
         },
         {
           "name": "tokens: scoped token sees only allowed types in allowed folders; propose_only writes queue; forbidden verbs 403",
           "status": "PASS",
-          "ms": 31,
+          "ms": 50,
           "note": "113 visible events"
         },
         {
           "name": "redaction: one-time codes and card numbers masked for the scoped token, raw for admin, snippet too",
           "status": "PASS",
-          "ms": 236,
+          "ms": 243,
           "note": "masked for agent, raw for admin"
         },
         {
           "name": "folder scope: a message moved out of the allowed folder disappears for the scoped token, and returns",
           "status": "PASS",
-          "ms": 86,
+          "ms": 80,
+          "note": "404 while archived, 200 when back"
+        },
+        {
+          "name": "publish: a plug-in token appends a derived event; core types reserved; non-publishers refused",
+          "status": "PASS",
+          "ms": 5,
+          "note": "derived event stored with publisher name"
+        },
+        {
+          "name": "tokens: expired and deleted tokens are unauthorized",
+          "status": "PASS",
+          "ms": 3,
+          "note": "401 for both"
+        },
+        {
+          "name": "cursor log: strictly increasing, no gaps",
+          "status": "PASS",
+          "ms": 2,
+          "note": "173 events contiguous"
+        },
+        {
+          "name": "offline catch-up: changes made while the engine was down arrive exactly once after restart",
+          "status": "PASS",
+          "ms": 2696,
+          "note": "1 received, 1 updated, 0 deleted, no duplicates"
+        }
+      ],
+      "quirks": [
+        "Push: idle, 210 ms to message.received",
+        "25 external flag changes delivered in 373 ms",
+        "Incremental sync: qresync; expunge detection: VANISHED",
+        "Folder model: folders; roles: archive=Archive, trash=Deleted Items, drafts=Drafts, inbox=INBOX, spam=Junk Mail, sent=Sent Items",
+        "Threads: none",
+        "Sent copy filed by: client"
+      ],
+      "measurements": {
+        "push_ms": 210,
+        "external_flag_ms": 207,
+        "external_move_out_ms": 212,
+        "external_move_in_ms": 211,
+        "external_expunge_ms": 214,
+        "storm_ms": 373
+      },
+      "extensions": [
+        "IMAP4rev2",
+        "IMAP4rev1",
+        "ENABLE",
+        "SASL-IR",
+        "LITERAL+",
+        "ID",
+        "UTF8=ACCEPT",
+        "JMAPACCESS",
+        "IDLE",
+        "NAMESPACE",
+        "CHILDREN",
+        "MULTIAPPEND",
+        "BINARY",
+        "UNSELECT",
+        "ACL",
+        "UIDPLUS",
+        "ESEARCH",
+        "WITHIN",
+        "SEARCHRES",
+        "SORT",
+        "THREAD=REFERENCES",
+        "LIST-EXTENDED",
+        "LIST-STATUS",
+        "ESORT",
+        "SORT=DISPLAY",
+        "SPECIAL-USE",
+        "CREATE-SPECIAL-USE",
+        "MOVE",
+        "CONDSTORE",
+        "QRESYNC",
+        "UNAUTHENTICATE",
+        "STATUS=SIZE",
+        "OBJECTID",
+        "PREVIEW",
+        "QUOTA",
+        "QUOTA=RES-STORAGE"
+      ],
+      "capabilities": {
+        "folders": "folders",
+        "push": "idle",
+        "incremental_sync": "qresync",
+        "undo_send_seconds": 0,
+        "server_rules": "none",
+        "max_connections": 5,
+        "send_limit_per_day": null,
+        "threads": "none",
+        "permanent_delete": true,
+        "sent_copy": "client"
+      },
+      "folders": [
+        {
+          "name": "Archive",
+          "role": "archive"
+        },
+        {
+          "name": "Deleted Items",
+          "role": "trash"
+        },
+        {
+          "name": "Drafts",
+          "role": "drafts"
+        },
+        {
+          "name": "INBOX",
+          "role": "inbox"
+        },
+        {
+          "name": "Junk Mail",
+          "role": "spam"
+        },
+        {
+          "name": "Sent Items",
+          "role": "sent"
+        }
+      ]
+    },
+    {
+      "name": "stalwart-imap-oauth",
+      "server": "Stalwart 0.13.3 over IMAP with OAuth (XOAUTH2/OAUTHBEARER, refresh token from Stalwart's own token endpoint; docker stalwartlabs/stalwart:v0.13.3)",
+      "provider": "imap",
+      "scenarios": [
+        {
+          "name": "initial sync: exactly the 3 seeded messages, reply threaded (2 threads)",
+          "status": "PASS",
+          "ms": 0,
+          "note": "3 received, 2 threads"
+        },
+        {
+          "name": "arrival: exactly one message.received and one thread.updated, with trust",
+          "status": "PASS",
+          "ms": 729,
+          "note": "206 ms, trust=suspicious"
+        },
+        {
+          "name": "search: full-text finds body text from the sync-time snippet",
+          "status": "PASS",
+          "ms": 1,
+          "note": "1 hit(s)"
+        },
+        {
+          "name": "body: fetched on demand from the server and parsed",
+          "status": "PASS",
+          "ms": 17,
+          "note": "61 chars"
+        },
+        {
+          "name": "set_flags via the engine: one message.updated with before/after",
+          "status": "PASS",
+          "ms": 337,
+          "note": "seen false -> true"
+        },
+        {
+          "name": "flag change from another client arrives as message.updated",
+          "status": "PASS",
+          "ms": 464,
+          "note": "212 ms"
+        },
+        {
+          "name": "move via the engine to archive, then undo",
+          "status": "PASS",
+          "ms": 83,
+          "note": "same message id throughout"
+        },
+        {
+          "name": "set_folders: a message in two folders at once, then undo back to one",
+          "status": "PASS",
+          "ms": 54,
+          "note": "both folders (2), then back to inbox, one id throughout"
+        },
+        {
+          "name": "tags: engine-owned tags set, searched, listed, scoped and undone",
+          "status": "PASS",
+          "ms": 11,
+          "note": "set, found by tag and by text+tag, listed, invalid name rejected, removed, undone"
+        },
+        {
+          "name": "move from another client: one message.updated, no received, no deleted",
+          "status": "PASS",
+          "ms": 965,
+          "note": "208 ms out, 216 ms back in, id stable"
+        },
+        {
+          "name": "expunge from another client: exactly one message.deleted",
+          "status": "PASS",
+          "ms": 981,
+          "note": "213 ms"
+        },
+        {
+          "name": "idempotency: same client_key returns the same action",
+          "status": "PASS",
+          "ms": 24,
+          "note": "act_d1629d80a7e275e0"
+        },
+        {
+          "name": "propose -> approve: delete to trash only after approval, then undo",
+          "status": "PASS",
+          "ms": 69,
+          "note": "proposed, approved, trashed, reverted"
+        },
+        {
+          "name": "permanent delete: exactly one message.deleted",
+          "status": "PASS",
+          "ms": 259,
+          "note": "deleted"
+        },
+        {
+          "name": "reject: a rejected proposal never touches the server",
+          "status": "PASS",
+          "ms": 4,
+          "note": "rejected"
+        },
+        {
+          "name": "create_draft: lands in Drafts as a draft, threaded with its parent, then undone",
+          "status": "PASS",
+          "ms": 50,
+          "note": "created in thread, then removed"
+        },
+        {
+          "name": "attachments: listed on the message and downloadable byte for byte",
+          "status": "PASS",
+          "ms": 255,
+          "note": "2 listed, csv and 1 KB binary identical, index 9 is 404"
+        },
+        {
+          "name": "send: delivered to another mailbox, marked machine-sent, copy filed in Sent",
+          "status": "PASS",
+          "ms": 49,
+          "note": "delivered in 21 ms, sent copy after 1 ms, filed by client"
+        },
+        {
+          "name": "schedule_timer: fires as timer.fired with the payload",
+          "status": "PASS",
+          "ms": 3750,
+          "note": "fired after 3748 ms"
+        },
+        {
+          "name": "flag storm: 25 flag changes from another client arrive as exactly 25 updates",
+          "status": "PASS",
+          "ms": 1985,
+          "note": "338 ms for 25"
+        },
+        {
+          "name": "tokens: scoped token sees only allowed types in allowed folders; propose_only writes queue; forbidden verbs 403",
+          "status": "PASS",
+          "ms": 55,
+          "note": "113 visible events"
+        },
+        {
+          "name": "redaction: one-time codes and card numbers masked for the scoped token, raw for admin, snippet too",
+          "status": "PASS",
+          "ms": 271,
+          "note": "masked for agent, raw for admin"
+        },
+        {
+          "name": "folder scope: a message moved out of the allowed folder disappears for the scoped token, and returns",
+          "status": "PASS",
+          "ms": 85,
           "note": "404 while archived, 200 when back"
         },
         {
@@ -430,31 +691,31 @@
         {
           "name": "cursor log: strictly increasing, no gaps",
           "status": "PASS",
-          "ms": 3,
+          "ms": 2,
           "note": "173 events contiguous"
         },
         {
           "name": "offline catch-up: changes made while the engine was down arrive exactly once after restart",
           "status": "PASS",
-          "ms": 3044,
+          "ms": 2734,
           "note": "1 received, 1 updated, 0 deleted, no duplicates"
         }
       ],
       "quirks": [
-        "Push: idle, 216 ms to message.received",
-        "25 external flag changes delivered in 462 ms",
+        "Push: idle, 206 ms to message.received",
+        "25 external flag changes delivered in 338 ms",
         "Incremental sync: qresync; expunge detection: VANISHED",
         "Folder model: folders; roles: archive=Archive, trash=Deleted Items, drafts=Drafts, inbox=INBOX, spam=Junk Mail, sent=Sent Items",
         "Threads: none",
         "Sent copy filed by: client"
       ],
       "measurements": {
-        "push_ms": 216,
-        "external_flag_ms": 210,
-        "external_move_out_ms": 207,
-        "external_move_in_ms": 205,
-        "external_expunge_ms": 206,
-        "storm_ms": 462
+        "push_ms": 206,
+        "external_flag_ms": 212,
+        "external_move_out_ms": 208,
+        "external_move_in_ms": 216,
+        "external_expunge_ms": 213,
+        "storm_ms": 338
       },
       "extensions": [
         "IMAP4rev2",
@@ -547,175 +808,175 @@
         {
           "name": "arrival: exactly one message.received and one thread.updated, with trust",
           "status": "PASS",
-          "ms": 863,
-          "note": "217 ms, trust=suspicious"
+          "ms": 748,
+          "note": "219 ms, trust=suspicious"
         },
         {
           "name": "search: full-text finds body text from the sync-time snippet",
           "status": "PASS",
-          "ms": 2,
+          "ms": 1,
           "note": "1 hit(s)"
         },
         {
           "name": "body: fetched on demand from the server and parsed",
           "status": "PASS",
-          "ms": 44,
+          "ms": 18,
           "note": "61 chars"
         },
         {
           "name": "set_flags via the engine: one message.updated with before/after",
           "status": "PASS",
-          "ms": 326,
+          "ms": 319,
           "note": "seen false -> true"
         },
         {
           "name": "flag change from another client arrives as message.updated",
           "status": "PASS",
-          "ms": 1945,
-          "note": "1028 ms"
+          "ms": 2118,
+          "note": "1038 ms"
         },
         {
           "name": "move via the engine to archive, then undo",
           "status": "PASS",
-          "ms": 124,
+          "ms": 22,
           "note": "same message id throughout"
         },
         {
           "name": "set_folders: a message in two folders at once, then undo back to one",
           "status": "PASS",
-          "ms": 22,
+          "ms": 21,
           "note": "both folders (2), then back to inbox, one id throughout"
         },
         {
           "name": "tags: engine-owned tags set, searched, listed, scoped and undone",
           "status": "PASS",
-          "ms": 11,
+          "ms": 10,
           "note": "set, found by tag and by text+tag, listed, invalid name rejected, removed, undone"
         },
         {
           "name": "move from another client: one message.updated, no received, no deleted",
           "status": "PASS",
-          "ms": 1806,
-          "note": "839 ms out, 409 ms back in, id stable"
+          "ms": 1846,
+          "note": "845 ms out, 420 ms back in, id stable"
         },
         {
           "name": "expunge from another client: exactly one message.deleted",
           "status": "PASS",
-          "ms": 2686,
-          "note": "1060 ms"
+          "ms": 2485,
+          "note": "831 ms"
         },
         {
           "name": "idempotency: same client_key returns the same action",
           "status": "PASS",
-          "ms": 14,
-          "note": "act_cf0965503c3fab62"
+          "ms": 46,
+          "note": "act_78ebf415a4a02466"
         },
         {
           "name": "propose -> approve: delete to trash only after approval, then undo",
           "status": "PASS",
-          "ms": 17,
+          "ms": 115,
           "note": "proposed, approved, trashed, reverted"
         },
         {
           "name": "permanent delete: exactly one message.deleted",
           "status": "PASS",
-          "ms": 436,
+          "ms": 474,
           "note": "deleted"
         },
         {
           "name": "reject: a rejected proposal never touches the server",
           "status": "PASS",
-          "ms": 3,
+          "ms": 6,
           "note": "rejected"
         },
         {
           "name": "create_draft: lands in Drafts as a draft, threaded with its parent, then undone",
           "status": "PASS",
-          "ms": 29,
+          "ms": 50,
           "note": "created in thread, then removed"
         },
         {
           "name": "attachments: listed on the message and downloadable byte for byte",
           "status": "PASS",
-          "ms": 902,
+          "ms": 985,
           "note": "2 listed, csv and 1 KB binary identical, index 9 is 404"
         },
         {
           "name": "send: delivered to another mailbox, marked machine-sent, copy filed in Sent",
           "status": "PASS",
-          "ms": 52,
-          "note": "delivered in 29 ms, sent copy after 1 ms, filed by server"
+          "ms": 142,
+          "note": "delivered in 79 ms, sent copy after 7 ms, filed by server"
         },
         {
           "name": "schedule_timer: fires as timer.fired with the payload",
           "status": "PASS",
-          "ms": 3558,
-          "note": "fired after 3556 ms"
+          "ms": 3800,
+          "note": "fired after 3775 ms"
         },
         {
           "name": "flag storm: 25 flag changes from another client arrive as exactly 25 updates",
           "status": "PASS",
-          "ms": 3219,
-          "note": "960 ms for 25"
+          "ms": 3425,
+          "note": "983 ms for 25"
         },
         {
           "name": "tokens: scoped token sees only allowed types in allowed folders; propose_only writes queue; forbidden verbs 403",
           "status": "PASS",
-          "ms": 30,
+          "ms": 126,
           "note": "110 visible events"
         },
         {
           "name": "redaction: one-time codes and card numbers masked for the scoped token, raw for admin, snippet too",
           "status": "PASS",
-          "ms": 1108,
+          "ms": 1153,
           "note": "masked for agent, raw for admin"
         },
         {
           "name": "folder scope: a message moved out of the allowed folder disappears for the scoped token, and returns",
           "status": "PASS",
-          "ms": 22,
+          "ms": 50,
           "note": "404 while archived, 200 when back"
         },
         {
           "name": "publish: a plug-in token appends a derived event; core types reserved; non-publishers refused",
           "status": "PASS",
-          "ms": 7,
+          "ms": 45,
           "note": "derived event stored with publisher name"
         },
         {
           "name": "tokens: expired and deleted tokens are unauthorized",
           "status": "PASS",
-          "ms": 3,
+          "ms": 29,
           "note": "401 for both"
         },
         {
           "name": "cursor log: strictly increasing, no gaps",
           "status": "PASS",
-          "ms": 2,
+          "ms": 38,
           "note": "169 events contiguous"
         },
         {
           "name": "offline catch-up: changes made while the engine was down arrive exactly once after restart",
           "status": "PASS",
-          "ms": 2712,
+          "ms": 3091,
           "note": "1 received, 1 updated, 0 deleted, no duplicates"
         }
       ],
       "quirks": [
-        "Push: jmap, 217 ms to message.received",
-        "25 external flag changes delivered in 960 ms",
+        "Push: jmap, 219 ms to message.received",
+        "25 external flag changes delivered in 983 ms",
         "Incremental sync: delta; expunge detection: Email/changes",
         "Folder model: labels; roles: inbox=Inbox, trash=Deleted Items, spam=Junk Mail, drafts=Drafts, sent=Sent Items, sent=Sent, trash=Trash, archive=Archive",
         "Threads: native",
         "Sent copy filed by: server"
       ],
       "measurements": {
-        "push_ms": 217,
-        "external_flag_ms": 1028,
-        "external_move_out_ms": 839,
-        "external_move_in_ms": 409,
-        "external_expunge_ms": 1060,
-        "storm_ms": 960
+        "push_ms": 219,
+        "external_flag_ms": 1038,
+        "external_move_out_ms": 845,
+        "external_move_in_ms": 420,
+        "external_expunge_ms": 831,
+        "storm_ms": 983
       },
       "extensions": [
         "IMAP4rev2",
@@ -816,97 +1077,97 @@
         {
           "name": "arrival: exactly one message.received and one thread.updated, with trust",
           "status": "PASS",
-          "ms": 936,
-          "note": "419 ms, trust=suspicious"
+          "ms": 943,
+          "note": "418 ms, trust=suspicious"
         },
         {
           "name": "search: full-text finds body text from the sync-time snippet",
           "status": "PASS",
-          "ms": 3,
+          "ms": 14,
           "note": "1 hit(s)"
         },
         {
           "name": "body: fetched on demand from the server and parsed",
           "status": "PASS",
-          "ms": 14,
+          "ms": 84,
           "note": "61 chars"
         },
         {
           "name": "set_flags via the engine: one message.updated with before/after",
           "status": "PASS",
-          "ms": 314,
+          "ms": 375,
           "note": "seen false -> true"
         },
         {
           "name": "flag change from another client arrives as message.updated",
           "status": "PASS",
-          "ms": 2985,
-          "note": "1081 ms"
+          "ms": 2889,
+          "note": "874 ms"
         },
         {
           "name": "move via the engine to archive, then undo",
           "status": "PASS",
-          "ms": 17,
+          "ms": 93,
           "note": "same message id throughout"
         },
         {
           "name": "set_folders: a message in two folders at once, then undo back to one",
           "status": "PASS",
-          "ms": 12,
+          "ms": 51,
           "note": "both folders (2), then back to inbox, one id throughout"
         },
         {
           "name": "tags: engine-owned tags set, searched, listed, scoped and undone",
           "status": "PASS",
-          "ms": 10,
+          "ms": 39,
           "note": "set, found by tag and by text+tag, listed, invalid name rejected, removed, undone"
         },
         {
           "name": "move from another client: one message.updated, no received, no deleted",
           "status": "PASS",
-          "ms": 4099,
-          "note": "2082 ms out, 1493 ms back in, id stable"
+          "ms": 3780,
+          "note": "1933 ms out, 1298 ms back in, id stable"
         },
         {
           "name": "expunge from another client: exactly one message.deleted",
           "status": "PASS",
-          "ms": 4573,
-          "note": "2143 ms"
+          "ms": 4586,
+          "note": "1928 ms"
         },
         {
           "name": "idempotency: same client_key returns the same action",
           "status": "PASS",
-          "ms": 13,
-          "note": "act_52016f90de58589a"
+          "ms": 19,
+          "note": "act_f644fba092f67f63"
         },
         {
           "name": "propose -> approve: delete to trash only after approval, then undo",
           "status": "PASS",
-          "ms": 11,
+          "ms": 37,
           "note": "proposed, approved, trashed, reverted"
         },
         {
           "name": "permanent delete: exactly one message.deleted",
           "status": "PASS",
-          "ms": 1483,
+          "ms": 1498,
           "note": "deleted"
         },
         {
           "name": "reject: a rejected proposal never touches the server",
           "status": "PASS",
-          "ms": 2,
+          "ms": 21,
           "note": "rejected"
         },
         {
           "name": "create_draft: lands in Drafts as a draft, threaded with its parent, then undone",
           "status": "PASS",
-          "ms": 14,
+          "ms": 131,
           "note": "created in thread, then removed"
         },
         {
           "name": "attachments: listed on the message and downloadable byte for byte",
           "status": "PASS",
-          "ms": 1899,
+          "ms": 1767,
           "note": "2 listed, csv and 1 KB binary identical, index 9 is 404"
         },
         {
@@ -918,31 +1179,31 @@
         {
           "name": "schedule_timer: fires as timer.fired with the payload",
           "status": "PASS",
-          "ms": 6756,
-          "note": "fired after 6754 ms"
+          "ms": 6780,
+          "note": "fired after 6764 ms"
         },
         {
           "name": "flag storm: 25 flag changes from another client arrive as exactly 25 updates",
           "status": "PASS",
-          "ms": 4412,
-          "note": "1881 ms for 25"
+          "ms": 4335,
+          "note": "1910 ms for 25"
         },
         {
           "name": "tokens: scoped token sees only allowed types in allowed folders; propose_only writes queue; forbidden verbs 403",
           "status": "PASS",
-          "ms": 102,
+          "ms": 124,
           "note": "107 visible events"
         },
         {
           "name": "redaction: one-time codes and card numbers masked for the scoped token, raw for admin, snippet too",
           "status": "PASS",
-          "ms": 889,
+          "ms": 904,
           "note": "masked for agent, raw for admin"
         },
         {
           "name": "folder scope: a message moved out of the allowed folder disappears for the scoped token, and returns",
           "status": "PASS",
-          "ms": 15,
+          "ms": 37,
           "note": "404 while archived, 200 when back"
         },
         {
@@ -954,37 +1215,37 @@
         {
           "name": "tokens: expired and deleted tokens are unauthorized",
           "status": "PASS",
-          "ms": 7,
+          "ms": 11,
           "note": "401 for both"
         },
         {
           "name": "cursor log: strictly increasing, no gaps",
           "status": "PASS",
-          "ms": 4,
+          "ms": 13,
           "note": "164 events contiguous"
         },
         {
           "name": "offline catch-up: changes made while the engine was down arrive exactly once after restart",
           "status": "PASS",
-          "ms": 2761,
+          "ms": 2772,
           "note": "1 received, 1 updated, 0 deleted, no duplicates"
         }
       ],
       "quirks": [
-        "Push: none, 419 ms to message.received",
-        "25 external flag changes delivered in 1881 ms",
+        "Push: none, 418 ms to message.received",
+        "25 external flag changes delivered in 1910 ms",
         "Incremental sync: history; expunge detection: UID set comparison",
         "Folder model: labels; roles: archive=Archive, drafts=DRAFT, inbox=INBOX, sent=SENT, spam=SPAM, trash=TRASH",
         "Threads: native",
         "Sent copy filed by: server"
       ],
       "measurements": {
-        "push_ms": 419,
-        "external_flag_ms": 1081,
-        "external_move_out_ms": 2082,
-        "external_move_in_ms": 1493,
-        "external_expunge_ms": 2143,
-        "storm_ms": 1881
+        "push_ms": 418,
+        "external_flag_ms": 874,
+        "external_move_out_ms": 1933,
+        "external_move_in_ms": 1298,
+        "external_expunge_ms": 1928,
+        "storm_ms": 1910
       },
       "extensions": [],
       "capabilities": {
@@ -1044,8 +1305,8 @@
         {
           "name": "arrival: exactly one message.received and one thread.updated, with trust",
           "status": "PASS",
-          "ms": 753,
-          "note": "221 ms, trust=suspicious"
+          "ms": 944,
+          "note": "425 ms, trust=suspicious"
         },
         {
           "name": "search: full-text finds body text from the sync-time snippet",
@@ -1056,85 +1317,85 @@
         {
           "name": "body: fetched on demand from the server and parsed",
           "status": "PASS",
-          "ms": 19,
+          "ms": 43,
           "note": "61 chars"
         },
         {
           "name": "set_flags via the engine: one message.updated with before/after",
           "status": "PASS",
-          "ms": 327,
+          "ms": 329,
           "note": "seen false -> true"
         },
         {
           "name": "flag change from another client arrives as message.updated",
           "status": "PASS",
-          "ms": 3211,
-          "note": "1287 ms"
+          "ms": 2955,
+          "note": "1053 ms"
         },
         {
           "name": "move via the engine to archive, then undo",
           "status": "PASS",
-          "ms": 60,
+          "ms": 40,
           "note": "same message id throughout"
         },
         {
           "name": "set_folders: a message in two folders at once, then undo back to one",
           "status": "PASS",
-          "ms": 123,
+          "ms": 50,
           "note": "both folders (2), then back to inbox, one id throughout"
         },
         {
           "name": "tags: engine-owned tags set, searched, listed, scoped and undone",
           "status": "PASS",
-          "ms": 44,
+          "ms": 47,
           "note": "set, found by tag and by text+tag, listed, invalid name rejected, removed, undone"
         },
         {
           "name": "move from another client: one message.updated, no received, no deleted",
           "status": "PASS",
-          "ms": 3698,
-          "note": "1704 ms out, 1468 ms back in, id stable"
+          "ms": 3902,
+          "note": "1911 ms out, 1470 ms back in, id stable"
         },
         {
           "name": "expunge from another client: exactly one message.deleted",
           "status": "PASS",
-          "ms": 4711,
-          "note": "2086 ms"
+          "ms": 4484,
+          "note": "1895 ms"
         },
         {
           "name": "idempotency: same client_key returns the same action",
           "status": "PASS",
           "ms": 50,
-          "note": "act_562bf827614f6315"
+          "note": "act_f1b9fc087b746ab1"
         },
         {
           "name": "propose -> approve: delete to trash only after approval, then undo",
           "status": "PASS",
-          "ms": 37,
+          "ms": 65,
           "note": "proposed, approved, trashed, reverted"
         },
         {
           "name": "permanent delete: exactly one message.deleted",
           "status": "PASS",
-          "ms": 1300,
+          "ms": 1573,
           "note": "deleted"
         },
         {
           "name": "reject: a rejected proposal never touches the server",
           "status": "PASS",
-          "ms": 4,
+          "ms": 11,
           "note": "rejected"
         },
         {
           "name": "create_draft: lands in Drafts as a draft, threaded with its parent, then undone",
           "status": "PASS",
-          "ms": 37,
+          "ms": 60,
           "note": "created in thread, then removed"
         },
         {
           "name": "attachments: listed on the message and downloadable byte for byte",
           "status": "PASS",
-          "ms": 1962,
+          "ms": 2046,
           "note": "2 listed, csv and 1 KB binary identical, index 9 is 404"
         },
         {
@@ -1146,73 +1407,73 @@
         {
           "name": "schedule_timer: fires as timer.fired with the payload",
           "status": "PASS",
-          "ms": 6734,
-          "note": "fired after 6729 ms"
+          "ms": 6660,
+          "note": "fired after 6646 ms"
         },
         {
           "name": "flag storm: 25 flag changes from another client arrive as exactly 25 updates",
           "status": "PASS",
-          "ms": 4290,
-          "note": "1894 ms for 25"
+          "ms": 4308,
+          "note": "2162 ms for 25"
         },
         {
           "name": "tokens: scoped token sees only allowed types in allowed folders; propose_only writes queue; forbidden verbs 403",
           "status": "PASS",
-          "ms": 23,
+          "ms": 91,
           "note": "108 visible events"
         },
         {
           "name": "redaction: one-time codes and card numbers masked for the scoped token, raw for admin, snippet too",
           "status": "PASS",
-          "ms": 1074,
+          "ms": 678,
           "note": "masked for agent, raw for admin"
         },
         {
           "name": "folder scope: a message moved out of the allowed folder disappears for the scoped token, and returns",
           "status": "PASS",
-          "ms": 23,
+          "ms": 26,
           "note": "404 while archived, 200 when back"
         },
         {
           "name": "publish: a plug-in token appends a derived event; core types reserved; non-publishers refused",
           "status": "PASS",
-          "ms": 13,
+          "ms": 12,
           "note": "derived event stored with publisher name"
         },
         {
           "name": "tokens: expired and deleted tokens are unauthorized",
           "status": "PASS",
-          "ms": 7,
+          "ms": 10,
           "note": "401 for both"
         },
         {
           "name": "cursor log: strictly increasing, no gaps",
           "status": "PASS",
-          "ms": 3,
+          "ms": 2,
           "note": "165 events contiguous"
         },
         {
           "name": "offline catch-up: changes made while the engine was down arrive exactly once after restart",
           "status": "PASS",
-          "ms": 2807,
+          "ms": 3063,
           "note": "1 received, 1 updated, 0 deleted, no duplicates"
         }
       ],
       "quirks": [
-        "Push: none, 221 ms to message.received",
-        "25 external flag changes delivered in 1894 ms",
+        "Push: none, 425 ms to message.received",
+        "25 external flag changes delivered in 2162 ms",
         "Incremental sync: delta; expunge detection: Email/changes",
         "Folder model: folders; roles: inbox=Inbox, sent=Sent Items, drafts=Drafts, trash=Deleted Items, spam=Junk Email, archive=Archive",
         "Threads: hint",
         "Sent copy filed by: server"
       ],
       "measurements": {
-        "push_ms": 221,
-        "external_flag_ms": 1287,
-        "external_move_out_ms": 1704,
-        "external_move_in_ms": 1468,
-        "external_expunge_ms": 2086,
-        "storm_ms": 1894
+        "push_ms": 425,
+        "external_flag_ms": 1053,
+        "external_move_out_ms": 1911,
+        "external_move_in_ms": 1470,
+        "external_expunge_ms": 1895,
+        "storm_ms": 2162
       },
       "extensions": [],
       "capabilities": {
@@ -1262,25 +1523,25 @@
         {
           "name": "arrival: exactly one message.received and one thread.updated, with trust",
           "status": "PASS",
-          "ms": 923,
-          "note": "220 ms, trust=unverified"
+          "ms": 888,
+          "note": "211 ms, trust=unverified"
         },
         {
           "name": "search: full-text finds body text from the sync-time snippet",
           "status": "PASS",
-          "ms": 17,
+          "ms": 6,
           "note": "1 hit(s)"
         },
         {
           "name": "body: fetched on demand from the server and parsed",
           "status": "PASS",
-          "ms": 37,
+          "ms": 26,
           "note": "62 chars"
         },
         {
           "name": "set_flags via the engine: one message.updated with before/after",
           "status": "PASS",
-          "ms": 334,
+          "ms": 333,
           "note": "seen false -> true"
         },
         {
@@ -1304,7 +1565,7 @@
         {
           "name": "tags: engine-owned tags set, searched, listed, scoped and undone",
           "status": "PASS",
-          "ms": 109,
+          "ms": 30,
           "note": "set, found by tag and by text+tag, listed, invalid name rejected, removed, undone"
         },
         {
@@ -1322,8 +1583,8 @@
         {
           "name": "idempotency: same client_key returns the same action",
           "status": "PASS",
-          "ms": 11,
-          "note": "act_f0c7f8a05b7df2f8"
+          "ms": 10,
+          "note": "act_aedab35be0557abd"
         },
         {
           "name": "propose -> approve: delete to trash only after approval, then undo",
@@ -1334,13 +1595,13 @@
         {
           "name": "permanent delete: exactly one message.deleted",
           "status": "PASS",
-          "ms": 345,
+          "ms": 397,
           "note": "deleted"
         },
         {
           "name": "reject: a rejected proposal never touches the server",
           "status": "PASS",
-          "ms": 5,
+          "ms": 7,
           "note": "rejected"
         },
         {
@@ -1352,7 +1613,7 @@
         {
           "name": "attachments: listed on the message and downloadable byte for byte",
           "status": "PASS",
-          "ms": 417,
+          "ms": 350,
           "note": "2 listed, csv and 1 KB binary identical, index 9 is 404"
         },
         {
@@ -1364,8 +1625,8 @@
         {
           "name": "schedule_timer: fires as timer.fired with the payload",
           "status": "PASS",
-          "ms": 5922,
-          "note": "fired after 5917 ms"
+          "ms": 6131,
+          "note": "fired after 6126 ms"
         },
         {
           "name": "flag storm: 25 flag changes from another client arrive as exactly 25 updates",
@@ -1376,13 +1637,13 @@
         {
           "name": "tokens: scoped token sees only allowed types in allowed folders; propose_only writes queue; forbidden verbs 403",
           "status": "PASS",
-          "ms": 77,
+          "ms": 11,
           "note": "29 visible events"
         },
         {
           "name": "redaction: one-time codes and card numbers masked for the scoped token, raw for admin, snippet too",
           "status": "PASS",
-          "ms": 421,
+          "ms": 346,
           "note": "masked for agent, raw for admin"
         },
         {
@@ -1394,24 +1655,24 @@
         {
           "name": "publish: a plug-in token appends a derived event; core types reserved; non-publishers refused",
           "status": "PASS",
-          "ms": 31,
+          "ms": 6,
           "note": "derived event stored with publisher name"
         },
         {
           "name": "tokens: expired and deleted tokens are unauthorized",
           "status": "PASS",
-          "ms": 8,
+          "ms": 3,
           "note": "401 for both"
         },
         {
           "name": "cursor log: strictly increasing, no gaps",
           "status": "PASS",
-          "ms": 3,
+          "ms": 1,
           "note": "44 events contiguous"
         }
       ],
       "quirks": [
-        "Push: smtp, 220 ms to message.received",
+        "Push: smtp, 211 ms to message.received",
         "Incremental sync: none; expunge detection: n/a",
         "Folder model: folders; roles: inbox=Inbox",
         "No archive folder by default",
@@ -1419,7 +1680,7 @@
         "Sent copy filed by: client"
       ],
       "measurements": {
-        "push_ms": 220
+        "push_ms": 211
       },
       "capabilities": {
         "folders": "folders",

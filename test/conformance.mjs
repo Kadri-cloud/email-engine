@@ -2,7 +2,7 @@
 // offline catch-up test, and a report of what each server does.
 // Usage: node test/conformance.mjs [targetName ...]   (default: all in test/targets.json)
 // Writes conformance/report.json and conformance/REPORT.md.
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { buildContext, makeApi, makeSideChannel, rfc822, runScenarios, sleep, waitFor, key } from "./scenarios.mjs";
@@ -73,6 +73,8 @@ for (const [i, target] of targets.entries()) {
   rmSync(dataDir, { recursive: true, force: true });
   mkdirSync(dataDir, { recursive: true });
   console.log(`\n=== ${target.name}: ${target.server} ===`);
+  // A target may mint its account at run time: OAuth tokens cannot live in targets.json.
+  if (target.account_from) target.account = JSON.parse(execSync(target.account_from, { encoding: "utf8" }));
   const side = makeSideChannel(target.side);
   const result = { name: target.name, server: target.server, provider: target.account.provider, scenarios: [], quirks: [], measurements: {} };
   let mock = null;

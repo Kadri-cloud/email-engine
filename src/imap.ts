@@ -2,6 +2,7 @@
 // parked in IDLE on the inbox, one working connection for syncs and actions.
 // Everything above this file sees folders, messages, flags and refs only.
 import { ImapFlow, type FetchMessageObject, type FetchQueryObject, type MessageStructureObject } from "imapflow";
+import { OAuthClient } from "./oauth.js";
 import nodemailer from "nodemailer";
 import { roleFromName, type Adapter, type RemoteFolder, type RemoteMessage, type SyncSink } from "./adapter.js";
 import type { Address, Capabilities, Flags, FolderRole, ImapAccountConfig } from "./schema.js";
@@ -142,15 +143,35 @@ export class ImapAdapter implements Adapter {
   private idle: ImapFlow | null = null;
   capabilities: Capabilities | null = null;
 
-  constructor(private cfg: ImapAccountConfig) {}
+  private oauth: OAuthClient | null;
 
-  private makeClient() {
+  constructor(private cfg: ImapAccountConfig) {
+    this.oauth = cfg.imap.oauth ? new OAuthClient(cfg.imap.oauth) : null;
+  }
+
+  /** Password, or a current access token when the account holds a refresh token (imapflow picks OAUTHBEARER or XOAUTH2). */
+  private async auth() {
+    const c = this.cfg.imap;
+    return this.oauth ? { user: c.user, accessToken: await this.oauth.token() } : { user: c.user, pass: c.pass! };
+  }
+
+  /** Connect; a token the server refuses is refreshed now so the retry does not resend it. */
+  private async login(c: ImapFlow) {
+    try {
+      await c.connect();
+    } catch (e: any) {
+      if (e?.authenticationFailed && this.oauth) await this.oauth.token(true);
+      throw e;
+    }
+  }
+
+  private async makeClient() {
     const c = this.cfg.imap;
     return new ImapFlow({
       host: c.host,
       port: c.port,
       secure: c.secure,
-      auth: { user: c.user, pass: c.pass },
+      auth: await this.auth(),
       qresync: true,
       autoIdleDelay: 1000, // enter IDLE a second after the last command, so pushes arrive fast
       logger: false,
@@ -162,14 +183,14 @@ export class ImapAdapter implements Adapter {
   /** Working connection, connected lazily and replaced after any failure. */
   private async client(): Promise<ImapFlow> {
     if (this.work?.usable) return this.work;
-    const c = this.makeClient();
+    const c = await this.makeClient();
     c.on("error", () => {
       if (this.work === c) this.work = null;
     });
     c.on("close", () => {
       if (this.work === c) this.work = null;
     });
-    await c.connect();
+    await this.login(c);
     this.work = c;
     this.capabilities = this.describe(c);
     return c;
@@ -336,13 +357,13 @@ export class ImapAdapter implements Adapter {
   // ---------- push ----------
 
   async watch(path: string, onWake: (kind: string) => void, onClose: (err?: Error) => void) {
-    const c = this.makeClient();
+    const c = await this.makeClient();
     c.on("exists", () => onWake("exists"));
     c.on("expunge", () => onWake("expunge"));
     c.on("flags", () => onWake("flags"));
     c.on("error", (e) => onClose(e));
     c.on("close", () => onClose());
-    await c.connect();
+    await this.login(c);
     await c.mailboxOpen(path, { readOnly: true });
     this.idle = c; // imapflow auto-idles while the connection is otherwise quiet
   }
@@ -422,7 +443,7 @@ export class ImapAdapter implements Adapter {
       host: s.host,
       port: s.port,
       secure: s.secure,
-      auth: { user: s.user, pass: s.pass },
+      auth: s.pass || !this.oauth ? { user: s.user, pass: s.pass } : { type: "OAuth2", user: s.user, accessToken: await this.oauth.token() },
       tls: this.cfg.imap.insecure_tls ? { rejectUnauthorized: false } : undefined,
     });
     await t.sendMail({ raw, envelope: { from: addresses(h["from"])[0] ?? this.cfg.address, to } });

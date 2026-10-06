@@ -35,6 +35,33 @@
             "pass": {
               "type": "string"
             },
+            "oauth": {
+              "type": "object",
+              "properties": {
+                "token_url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "client_id": {
+                  "type": "string"
+                },
+                "client_secret": {
+                  "type": "string"
+                },
+                "refresh_token": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "token_url",
+                "client_id",
+                "refresh_token"
+              ],
+              "additionalProperties": false
+            },
             "insecure_tls": {
               "default": false,
               "type": "boolean"
@@ -45,7 +72,6 @@
             "port",
             "secure",
             "user",
-            "pass",
             "insecure_tls"
           ],
           "additionalProperties": false
@@ -77,8 +103,7 @@
             "host",
             "port",
             "secure",
-            "user",
-            "pass"
+            "user"
           ],
           "additionalProperties": false
         }

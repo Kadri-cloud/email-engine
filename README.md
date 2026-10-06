@@ -6,7 +6,7 @@ A self-hosted engine that turns any mailbox into one ordered event stream, with 
 
 ## What it does
 
-- **Syncs** any IMAP account with IDLE push, QRESYNC/CONDSTORE incremental sync (expunges arrive as VANISHED, no per-poll UID scans), reconnect with backoff, and folder-role detection.
+- **Syncs** any IMAP account with IDLE push, QRESYNC/CONDSTORE incremental sync (expunges arrive as VANISHED, no per-poll UID scans), reconnect with backoff, folder-role detection, and a password or an OAuth refresh token for login (XOAUTH2 and OAUTHBEARER, so Gmail and Microsoft 365 work over plain IMAP).
 - **Syncs** any JMAP account (Fastmail, Stalwart) with state-based delta sync, EventSource push, native threads and server-side filing of sent mail. Both adapters implement one interface; nothing above them knows which protocol is underneath.
 - **Receives forwarded mail** on its own SMTP port for accounts where IMAP is switched off but forwarding is allowed. Read-only by nature, and it never trusts authentication headers handed to it over plain SMTP.
 - **Speaks the Gmail API and Microsoft Graph** natively: labels as folders with a virtual Archive, `history.list` sync with Gmail; per-folder delta queries with immutable ids on Graph. Both poll until push (Pub/Sub, change notifications) is configured. Both are proven against mock servers in the conformance suite; live use needs your own OAuth client.
@@ -155,6 +155,17 @@ curl -X POST http://127.0.0.1:8080/accounts \
 
 Point a forwarding rule at that address and port. Set `inbound.user` and `inbound.pass` to require SMTP AUTH. Messages are stored under the data directory, flags and permanent delete work, moves and drafts refuse, and every message is `unverified` because headers on forwarded mail cannot be trusted.
 
+### IMAP with OAuth (Gmail, Microsoft 365, Stalwart)
+
+Exchange Online no longer accepts passwords over IMAP and Gmail wants an app password. The IMAP adapter speaks XOAUTH2 and OAUTHBEARER instead: give it a refresh token in place of a password and it mints access tokens as needed, refreshing them before expiry or the moment a server refuses one. SMTP signs in with the same token.
+
+```bash
+node test/oauth.mjs google CLIENT_ID [CLIENT_SECRET]    # prints a Gmail API config and an IMAP config; one scope covers both
+node test/oauth.mjs microsoft-imap CLIENT_ID [TENANT]   # Entra API permissions under "Office 365 Exchange Online": IMAP.AccessAsUser.All, SMTP.Send
+```
+
+The config is `imap.oauth` with `token_url`, `client_id`, an optional `client_secret`, `refresh_token` and, for Microsoft, `scope`; `imap.pass` and `smtp.pass` are left out. Exchange Online also needs SMTP AUTH enabled on the mailbox before it will accept a send. The `stalwart-imap-oauth` conformance target proves the whole flow against a real server: `test/stalwart-oauth.mjs` mints a refresh token from Stalwart's own OAuth server and every scenario, sending included, runs over that login.
+
 ### Gmail API and Microsoft Graph
 
 Both need an OAuth client you create once. The helper runs the sign-in on your machine and prints the refresh token and the account config to post.
@@ -214,7 +225,7 @@ node test/conformance.mjs my-provider
 
 Without `"destructive": true` the suite never purges and only touches the messages it injects itself, and it deletes the local database it built for that account when it finishes. Add a second throwaway mailbox under `send_to` to exercise sending. The report then records your provider's capabilities, extensions, latencies and quirks.
 
-Six built-in targets: Dovecot and Stalwart over IMAP, Stalwart over JMAP, the inbound SMTP listener, and mock Gmail and Graph servers (`test/mock-gmail.mjs`, `test/mock-graph.mjs`) that implement the documented endpoints the adapters use, including history ids, delta tokens with removed entries, immutable ids and Graph's delete-to-Deleted-Items rule. Mocks prove the adapters' sync logic; they do not reproduce every provider quirk, which is what a live target with your credentials is for.
+Seven built-in targets: Dovecot and Stalwart over IMAP, Stalwart over IMAP with OAuth, Stalwart over JMAP, the inbound SMTP listener, and mock Gmail and Graph servers (`test/mock-gmail.mjs`, `test/mock-graph.mjs`) that implement the documented endpoints the adapters use, including history ids, delta tokens with removed entries, immutable ids and Graph's delete-to-Deleted-Items rule. Mocks prove the adapters' sync logic; they do not reproduce every provider quirk, which is what a live target with your credentials is for.
 
 ## Development
 

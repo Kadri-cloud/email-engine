@@ -65,6 +65,29 @@
     }
   },
   {
+    "name": "stalwart-imap-oauth",
+    "server": "Stalwart 0.13.3 over IMAP with OAuth (XOAUTH2/OAUTHBEARER, refresh token from Stalwart's own token endpoint; docker stalwartlabs/stalwart:v0.13.3)",
+    "account_from": "node test/stalwart-oauth.mjs carol pass",
+    "side": {
+      "kind": "imap",
+      "host": "127.0.0.1",
+      "port": 1993,
+      "user": "carol",
+      "pass": "pass"
+    },
+    "destructive": true,
+    "send_to": {
+      "address": "bob@example.com",
+      "side": {
+        "kind": "imap",
+        "host": "127.0.0.1",
+        "port": 1993,
+        "user": "bob",
+        "pass": "pass"
+      }
+    }
+  },
+  {
     "name": "stalwart-jmap",
     "server": "Stalwart 0.13.3 over JMAP (docker stalwartlabs/stalwart:v0.13.3)",
     "account": {

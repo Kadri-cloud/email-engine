@@ -242,6 +242,16 @@ export const PublishRequest = z.object({
 
 // ---------- account config ----------
 
+/** OAuth 2.0 refresh-token credentials, shared by the IMAP (XOAUTH2/OAUTHBEARER), Gmail and Graph adapters. */
+export const OAuthConfig = z.object({
+  token_url: z.string().url(),
+  client_id: z.string(),
+  client_secret: z.string().optional(), // absent for a public client
+  refresh_token: z.string(),
+  scope: z.string().optional(), // Microsoft needs the IMAP/SMTP resource scopes on refresh; Google and Stalwart do not
+});
+export type OAuthConfig = z.infer<typeof OAuthConfig>;
+
 export const ImapAccountConfig = z.object({
   provider: z.literal("imap"),
   address: z.string().email(),
@@ -250,7 +260,8 @@ export const ImapAccountConfig = z.object({
     port: z.number().int().default(993),
     secure: z.boolean().default(true),
     user: z.string(),
-    pass: z.string(),
+    pass: z.string().optional(), // a password or app password ...
+    oauth: OAuthConfig.optional(), // ... or a refresh token: Gmail, Microsoft 365, Stalwart. `node test/oauth.mjs` prints one
     insecure_tls: z.boolean().default(false), // dev only: accept self-signed certificates
   }),
   smtp: z
@@ -259,10 +270,10 @@ export const ImapAccountConfig = z.object({
       port: z.number().int().default(587),
       secure: z.boolean().default(false),
       user: z.string(),
-      pass: z.string(),
+      pass: z.string().optional(), // absent: sign in with imap.oauth
     })
     .optional(),
-});
+}).refine((c) => (c.imap.pass || c.imap.oauth) && (!c.smtp || c.smtp.pass || c.imap.oauth), { message: "imap and smtp each need a pass, or imap.oauth" });
 export type ImapAccountConfig = z.infer<typeof ImapAccountConfig>;
 
 export const JmapAccountConfig = z.object({
